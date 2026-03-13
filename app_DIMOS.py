@@ -130,7 +130,6 @@ if check_password():
                                 s_id = re.search(r'CL_(\d+)', c_name).group(1)
                                 serie_final = df_res.iloc[:, idx].rolling(5, center=True).mean().ffill().bfill()
                                 
-                                # GRAFICO MATPLOTLIB (Senza dipendenze esterne)
                                 plt.figure(figsize=(10, 4))
                                 plt.plot(t_l, serie_final)
                                 plt.title(f"Sensore {s_id}")
