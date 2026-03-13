@@ -217,7 +217,7 @@ if check_password():
                                 serie = df_res.iloc[:, idx]
                                 m_val, d_val = serie.mean(), serie.std()
                                 serie_p = serie.mask(abs(serie - m_val) > (2 * d_val), m_val)
-                                serie_final = serie_p.rolling(5, center=True).mean().fillna(method='bfill').fillna(method='ffill')
+                                serie_final = serie_p.rolling(5, center=True).mean().bfill().ffill()
                                 
                                 # Generazione immagine grafico (per file word)
                                 fig_tmp = go.Figure()
@@ -233,4 +233,5 @@ if check_password():
                         st.download_button(label="📥 Scarica Report Word", data=target_file.getvalue(), file_name=f"Report_DIMOS_{asse_sel}.docx")
 
     else:
+
         st.info("Benvenuto sul portale DIMOS. Carica un file Excel per iniziare.")
