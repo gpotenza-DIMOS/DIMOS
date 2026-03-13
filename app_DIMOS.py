@@ -36,8 +36,8 @@ def check_password():
         if os.path.exists(p_dimos):
             st.image(p_dimos, use_container_width=True)
         st.markdown("<h2 style='text-align: center;'>Accesso</h2>", unsafe_allow_html=True)
-        user_id = st.text_input("ID Utente")
-        password = st.text_input("Password", type="password")
+        user_id = st.text_input("ID Utente", key="user_login")
+        password = st.text_input("Password", type="password", key="pass_login")
         if st.button("Entra"):
             if user_id == "dimos" and password == "micai!":
                 st.session_state["auth"] = True
