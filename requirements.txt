@@ -1,6 +1,6 @@
 streamlit
 pandas
-numpy
+openpyxl
 plotly
 python-docx
 kaleido==0.2.1.post1
