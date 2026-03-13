@@ -7,13 +7,14 @@ import re
 from io import BytesIO
 
 # --- GESTIONE LIBRERIA STAMPA ---
+DOCX_AVAILABLE = False
 try:
     from docx import Document
     from docx.shared import Cm, Inches
     import plotly.io as pio
     DOCX_AVAILABLE = True
-except ImportError:
-    DOCX_AVAILABLE = False
+except Exception as e:
+    st.sidebar.error(f"Nota: Funzione stampa non pronta. Errore: {e}")
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="DIMOS - Monitoraggio Avanzato Elettrolivelle", layout="wide")
@@ -139,3 +140,4 @@ if check_password():
                     target_file = BytesIO()
                     doc.save(target_file)
                     st.download_button("📥 Scarica Report", target_file.getvalue(), "Report.docx")
+
