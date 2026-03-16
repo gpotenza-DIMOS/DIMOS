@@ -51,18 +51,23 @@ def check_password():
 # --- MOTORE DI CALCOLO ---
 @st.cache_data(show_spinner=False)
 def elaborazione_vba_originale(df_values, l_barra, n_sigma, limit_val):
+    # Calcolo mm e delta C0 senza riempimenti artificiali
     data_mm = l_barra * np.sin(np.radians(df_values.values))
     data_c0 = data_mm - data_mm[0, :]
     data_cp0 = np.cumsum(data_c0, axis=1)
     
+    # Filtraggio outlier (mantenendo i NaN dove i dati mancano)
     data_cp0[np.abs(data_cp0) > limit_val] = np.nan
     means = np.nanmean(data_cp0, axis=0)
     stds = np.nanstd(data_cp0, axis=0)
     for j in range(data_cp0.shape[1]):
         m, s = means[j], stds[j]
-        mask = (data_cp0[:, j] < m - n_sigma*s) | (data_cp0[:, j] > m + n_sigma*s) | (np.isnan(data_cp0[:, j]))
-        data_cp0[mask, j] = m
-    return pd.DataFrame(data_cp0, index=df_values.index).ffill().fillna(0)
+        # Applica il filtro Sigma solo dove il dato esiste
+        mask = (data_cp0[:, j] < m - n_sigma*s) | (data_cp0[:, j] > m + n_sigma*s)
+        data_cp0[mask, j] = np.nan
+        
+    # Restituisce il DataFrame pulito senza forzare ffill() o fillna(0)
+    return pd.DataFrame(data_cp0, index=df_values.index)
 
 # --- ESECUZIONE PRINCIPALE ---
 if check_password():
@@ -71,7 +76,7 @@ if check_password():
         st.image(p_main_logo, width=600)
 
     with st.sidebar:
-        p_micro = get_asset_path("logo_microgeo.jpg") # Corretto in .jpg come file caricati
+        p_micro = get_asset_path("logo_microgeo.jpg")
         if os.path.exists(p_micro): st.image(p_micro, use_container_width=True)
         
         st.header("⚙️ Parametri")
@@ -129,7 +134,8 @@ if check_password():
 
             if sensor_cols:
                 time_col = pd.to_datetime(df_full['Data e Ora'])
-                df_cp0 = elaborazione_vba_originale(df_full[sensor_cols].ffill(), l_barra, sigma_val, limit_val)
+                # Rimosso .ffill() dalla chiamata della funzione
+                df_cp0 = elaborazione_vba_originale(df_full[sensor_cols], l_barra, sigma_val, limit_val)
                 labels = [re.search(r'CL_(\d+)', c).group(1) for c in sensor_cols]
 
                 st.subheader(f"🎬 Monitoraggio Deformata {asse_sel}: {sel_sheet}")
@@ -149,7 +155,7 @@ if check_password():
                 fig_vid.add_trace(go.Scatter(
                     x=labels, y=df_sampled.iloc[0], 
                     mode='lines+markers+text',
-                    text=[f"{v:.2f}" for v in df_sampled.iloc[0]], 
+                    text=[f"{v:.2f}" if pd.notnull(v) else "" for v in df_sampled.iloc[0]], 
                     textposition="top center"
                 ))
 
@@ -162,8 +168,8 @@ if check_password():
                 )
                 
                 frames = [go.Frame(data=[go.Scatter(x=labels, y=df_sampled.iloc[i],
-                          text=[f"{v:.2f}" for v in df_sampled.iloc[i]],
-                          marker=dict(size=12, color=['red' if abs(v)>=5 else 'orange' if abs(v)>=2 else 'green' for v in df_sampled.iloc[i]]))], name=str(i)) for i in range(len(df_sampled))]
+                          text=[f"{v:.2f}" if pd.notnull(v) else "" for v in df_sampled.iloc[i]],
+                          marker=dict(size=12, color=['red' if pd.notnull(v) and abs(v)>=5 else 'orange' if pd.notnull(v) and abs(v)>=2 else 'green' if pd.notnull(v) else 'rgba(0,0,0,0)' for v in df_sampled.iloc[i]]))], name=str(i)) for i in range(len(df_sampled))]
                 fig_vid.frames = frames
                 st.plotly_chart(fig_vid, use_container_width=True)
 
@@ -174,61 +180,6 @@ if check_password():
                     fig_hist = go.Figure()
                     for s in sel_sens:
                         idx_s = labels.index(s)
-                        fig_hist.add_trace(go.Scatter(x=time_col, y=df_cp0.iloc[:, idx_s], name=f"CL_{s}"))
+                        fig_hist.add_trace(go.Scatter(x=time_col, y=df_cp0.iloc[:, idx_s], name=f"CL_{s}", connectgaps=False))
                     fig_hist.update_layout(xaxis=dict(tickangle=-90), hovermode="x unified", template="plotly_white")
                     st.plotly_chart(fig_hist, use_container_width=True)
-
-        with tab2:
-            st.subheader("🖨️ Centro Stampa Massiva")
-            layers_print = st.multiselect("Layer da esportare:", sheets, default=sheets)
-            
-            if st.button("🚀 GENERA DOCUMENTAZIONE WORD"):
-                if not DOCX_AVAILABLE:
-                    st.error("Librerie Word non pronte.")
-                else:
-                    with st.spinner("Generazione Report in corso..."):
-                        doc = Document()
-                        doc.add_heading('REPORT MONITORAGGIO DIMOS', 0)
-                        
-                        for l_name in layers_print:
-                            doc.add_page_break()
-                            doc.add_heading(f'LAYER: {l_name}', level=1)
-                            
-                            df_l = pd.read_excel(file_input, sheet_name=l_name)
-                            df_l.columns = [str(c).strip() for c in df_l.columns]
-                            cols_l = [c for c in df_l.columns if "CL_" in c and f"_{asse_sel}" in c]
-                            
-                            if not cols_l: continue
-                            
-                            df_res = elaborazione_vba_originale(df_l[cols_l].ffill(), l_barra, sigma_val, limit_val)
-                            t_l = pd.to_datetime(df_l['Data e Ora'])
-                            
-                            for idx, c_name in enumerate(cols_l):
-                                s_id = re.search(r'CL_(\d+)', c_name).group(1)
-                                
-                                # LOGICA VBA: PULIZIA SIGMA 2 E MEDIA MOBILE 5 PUNTI
-                                serie = df_res.iloc[:, idx]
-                                m_val, d_val = serie.mean(), serie.std()
-                                serie_p = serie.mask(abs(serie - m_val) > (2 * d_val), m_val)
-                                serie_final = serie_p.rolling(5, center=True).mean().ffill().bfill()
-                                
-                                # GRAFICO MATPLOTLIB (Sostituisce Plotly per la stampa)
-                                plt.figure(figsize=(10, 4))
-                                plt.plot(t_l, serie_final, color='blue', linewidth=1)
-                                plt.title(f"Sensore {s_id} - Layer {l_name}")
-                                plt.grid(True, linestyle='--', alpha=0.7)
-                                plt.ylabel("mm")
-                                
-                                buf = BytesIO()
-                                plt.savefig(buf, format='png', bbox_inches='tight')
-                                plt.close()
-                                buf.seek(0)
-                                
-                                doc.add_paragraph(f"Trend Temporale Sensore: {s_id}")
-                                doc.add_picture(buf, width=Inches(6))
-                        
-                        target_file = BytesIO()
-                        doc.save(target_file)
-                        st.download_button(label="📥 Scarica Report Word", data=target_file.getvalue(), file_name=f"Report_DIMOS_{asse_sel}.docx")
-    else:
-        st.info("Benvenuto sul portale DIMOS. Carica un file Excel per iniziare.")
