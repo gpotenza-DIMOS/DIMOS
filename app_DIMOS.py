@@ -45,12 +45,12 @@ def check_password():
                 st.error("ID o Password errati.")
     return False
 
-# --- MOTORE DI CALCOLO (CONGRUENTE VBA) ---
+# --- MOTORE DI CALCOLO (CONGRUENTE VBA - INVARIATO) ---
 @st.cache_data(show_spinner=False)
 def elaborazione_vba_completa(df_values, l_barra, n_sigma):
-    df_values = df_values.replace(0, np.nan) # 1. Bonifica Zeri
+    df_values = df_values.replace(0, np.nan)
     data_mm = l_barra * np.sin(np.radians(df_values.values))
-    data_c0 = data_mm - data_mm[0, :] # 2. Delta Singolo (C0)
+    data_c0 = data_mm - data_mm[0, :]
     data_processed = data_c0.copy()
     means = np.nanmean(data_processed, axis=0)
     stds = np.nanstd(data_processed, axis=0)
@@ -60,21 +60,16 @@ def elaborazione_vba_completa(df_values, l_barra, n_sigma):
         data_processed[mask, j] = m
     return pd.DataFrame(data_processed, index=df_values.index)
 
-# --- CACHE SPECIFICA PER I FRAME (VELOCIZZA IL CAMBIO INPUT) ---
 @st.cache_data(show_spinner=False)
 def genera_frames_animazione(data_matrix, color_matrix, labels):
-    frames = []
-    for i in range(len(data_matrix)):
-        frames.append(go.Frame(
-            data=[go.Scatter(
-                x=labels, 
-                y=data_matrix[i],
-                text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[i]],
-                marker=dict(color=color_matrix[i])
-            )],
-            name=str(i)
-        ))
-    return frames
+    return [go.Frame(
+        data=[go.Scatter(
+            x=labels, y=data_matrix[i],
+            text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[i]],
+            marker=dict(color=color_matrix[i])
+        )],
+        name=str(i)
+    ) for i in range(len(data_matrix))]
 
 def precalcola_colori(df):
     def get_color(v):
@@ -85,7 +80,41 @@ def precalcola_colori(df):
         return 'green'
     return df.map(get_color).values
 
-# --- FUNZIONI EXCEL E WORD ---
+# --- FRAMMENTO PER ANALISI DETTAGLIO (VELOCIZZA IL MULTISELECT) ---
+@st.fragment
+def render_trend_analysis(df_cp0, time_col, labels):
+    st.divider()
+    st.subheader("📈 Analisi Dettaglio Sensore (Aggiornamento Rapido)")
+    sel_sens = st.multiselect("Seleziona sensori:", labels, default=labels[:1] if labels else [])
+    
+    if sel_sens:
+        fig_trend = go.Figure()
+        for s_id in sel_sens:
+            idx = labels.index(s_id)
+            y_val = df_cp0.iloc[:, idx]
+            
+            # Media Mobile
+            y_mm = y_val.rolling(window=5, center=True).mean()
+            fig_trend.add_trace(go.Scatter(x=time_col, y=y_mm, name=f"CL_{s_id} Media Mobile", mode='lines'))
+            
+            # Trendline Polinomiale
+            valid = ~np.isnan(y_val)
+            if valid.any():
+                x_num = np.arange(len(y_raw := y_val.values))
+                z = np.polyfit(x_num[valid], y_raw[valid], 3)
+                p = np.poly1d(z)
+                fig_trend.add_trace(go.Scatter(x=time_col, y=p(x_num), name=f"Trend {s_id}", line=dict(dash='dash', width=1)))
+        
+        fig_trend.update_layout(
+            xaxis=dict(tickformat="%d/%m/%Y", title="Data"),
+            yaxis=dict(title="mm"),
+            hovermode="x unified",
+            template="plotly_white", 
+            height=450
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+# --- FUNZIONI EXPORT (INVARIATE) ---
 def export_to_excel_full(df_raw, l_barra, n_sigma):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -108,21 +137,14 @@ def crea_report_word(df_data, time_col, sensor_labels):
         valid = ~np.isnan(y_raw)
         if valid.any():
             x_num = np.arange(len(y_raw))
-            z = np.polyfit(x_num[valid], y_raw[valid], 3)
+            z = np.polyfit(x_num[valid], y_raw.values[valid], 3)
             p = np.poly1d(z)
             plt.plot(time_col, p(x_num), '--', color='red', label='Trend Polinomiale')
-        plt.title(f'Sensore: {label}') 
-        plt.grid(True)
-        plt.legend()
-        plt.xticks(rotation=45)
+        plt.title(f'Sensore: {label}'); plt.grid(True); plt.legend(); plt.xticks(rotation=45)
         plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%d/%m/%Y'))
-        img_stream = BytesIO()
-        plt.savefig(img_stream, format='png', bbox_inches='tight')
-        doc.add_picture(img_stream, width=Inches(6))
-        plt.close()
-    out_word = BytesIO()
-    doc.save(out_word)
-    return out_word.getvalue()
+        img_stream = BytesIO(); plt.savefig(img_stream, format='png', bbox_inches='tight')
+        doc.add_picture(img_stream, width=Inches(6)); plt.close()
+    out_word = BytesIO(); doc.save(out_word); return out_word.getvalue()
 
 # --- ESECUZIONE ---
 if check_password():
@@ -158,67 +180,41 @@ if check_password():
                 df_cp0 = elaborazione_vba_completa(df_full[sensor_cols], l_barra, sigma_val)
                 labels = [re.search(r'CL_(\d+)', c).group(1) for c in sensor_cols]
                 
-                # PRE-CALCOLO DATI E COLORI
+                # Parte Animazione (Pesante, ma protetta dal Fragment sotto)
                 color_matrix = precalcola_colori(df_cp0)
                 data_matrix = df_cp0.values
-                
                 st.subheader(f"🎬 Animazione Deformata Asse {asse_sel}")
                 
-                # GRAFICO DINAMICO
                 fig_vid = go.Figure()
                 fig_vid.add_trace(go.Scatter(
-                    x=labels, y=data_matrix[0],
-                    mode='lines+markers+text',
+                    x=labels, y=data_matrix[0], mode='lines+markers+text',
                     text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[0]],
-                    textposition="top center",
-                    marker=dict(size=12, color=color_matrix[0])
+                    textposition="top center", marker=dict(size=12, color=color_matrix[0])
                 ))
                 fig_vid.update_layout(
                     xaxis=dict(type='category', title="ID Sensore"),
                     yaxis=dict(range=[-limit_val, limit_val], title="mm"),
-                    height=500, template="plotly_white",
+                    height=450, template="plotly_white",
                     sliders=[{"active": 0, "steps": [{"method": "animate", "label": t.strftime('%d/%m/%Y %H:%M'), 
                                "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": False}}]} 
                               for i, t in enumerate(time_col)]}]
                 )
-                
-                # USA LA CACHE PER I FRAME: rende il cambio sensori istantaneo
                 fig_vid.frames = genera_frames_animazione(data_matrix, color_matrix, labels)
-                
                 st.plotly_chart(fig_vid, use_container_width=True)
 
-                # ANALISI DETTAGLIO SENSORI (Ora molto più veloce)
-                st.divider()
-                st.subheader("📈 Analisi Dettaglio Sensore")
-                sel_sens = st.multiselect("Seleziona sensori da visualizzare:", labels, default=labels[:1] if labels else [])
-                
-                if sel_sens:
-                    fig_trend = go.Figure()
-                    for s_id in sel_sens:
-                        idx = labels.index(s_id)
-                        y_val = df_cp0.iloc[:, idx]
-                        y_mm = y_val.rolling(window=5, center=True).mean()
-                        fig_trend.add_trace(go.Scatter(x=time_col, y=y_mm, name=f"CL_{s_id} Media Mobile"))
-                        
-                        valid = ~np.isnan(y_val)
-                        if valid.any():
-                            x_num = np.arange(len(y_val))
-                            z = np.polyfit(x_num[valid], y_val[valid], 3)
-                            p = np.poly1d(z)
-                            fig_trend.add_trace(go.Scatter(x=time_col, y=p(x_num), name=f"Trend {s_id}", line=dict(dash='dash')))
-                    
-                    fig_trend.update_layout(xaxis=dict(tickformat="%d/%m/%Y"), template="plotly_white", height=450)
-                    st.plotly_chart(fig_trend, use_container_width=True)
+                # CHIAMATA AL FRAMMENTO (Questa parte ora è isolata e velocissima)
+                render_trend_analysis(df_cp0, time_col, labels)
 
         with tab2:
-            # (Resto del codice per Word ed Excel invariato)
             st.subheader("Generazione Output")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("🚀 Genera Report Word"):
-                    word_data = crea_report_word(df_cp0, time_col, labels)
-                    st.download_button("Scarica .docx", word_data, "Report_Monitoraggio.docx")
+                    with st.spinner("Generazione Report in corso..."):
+                        word_data = crea_report_word(df_cp0, time_col, labels)
+                        st.download_button("Scarica .docx", word_data, "Report_Monitoraggio.docx")
             with c2:
-                if st.button("📊 Esporta Excel Completo (C, C0, CP0)"):
-                    excel_out = export_to_excel_full(df_full[sensor_cols], l_barra, sigma_val)
-                    st.download_button("Scarica .xlsx", excel_out, "Dati_Elaborati.xlsx")
+                if st.button("📊 Esporta Excel Completo"):
+                    with st.spinner("Preparazione Excel..."):
+                        excel_out = export_to_excel_full(df_full[sensor_cols], l_barra, sigma_val)
+                        st.download_button("Scarica .xlsx", excel_out, "Dati_Elaborati.xlsx")
