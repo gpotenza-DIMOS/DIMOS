@@ -48,26 +48,45 @@ def check_password():
                 st.error("ID o Password errati.")
     return False
 
-# --- MOTORE DI CALCOLO ---
+# --- MOTORE DI CALCOLO AGGIORNATO ---
 @st.cache_data(show_spinner=False)
 def elaborazione_vba_originale(df_values, l_barra, n_sigma, limit_val):
-    # Calcolo mm e delta C0 senza riempimenti artificiali
-    data_mm = l_barra * np.sin(np.radians(df_values.values))
-    data_c0 = data_mm - data_mm[0, :]
-    data_cp0 = np.cumsum(data_c0, axis=1)
+    # 1. BONIFICA ZERI: Sostituisce 0 con NaN (equivalente a ClearContents in VBA )
+    df_values = df_values.replace(0, np.nan)
     
-    # Filtraggio outlier (mantenendo i NaN dove i dati mancano)
-    data_cp0[np.abs(data_cp0) > limit_val] = np.nan
-    means = np.nanmean(data_cp0, axis=0)
-    stds = np.nanstd(data_cp0, axis=0)
-    for j in range(data_cp0.shape[1]):
+    # Conversione in mm (Layer C [cite: 130])
+    data_mm = l_barra * np.sin(np.radians(df_values.values))
+    
+    # 2. DELTA SINGOLO: Calcolo variazione rispetto a t0 (Layer C0 )
+    # Rimosso np.cumsum per calcolare il delta singolo per sensore
+    data_c0 = data_mm - data_mm[0, :]
+    
+    # Filtraggio outlier Sigma Gauss [cite: 121, 127]
+    data_processed = data_c0.copy()
+    means = np.nanmean(data_processed, axis=0)
+    stds = np.nanstd(data_processed, axis=0)
+    
+    for j in range(data_processed.shape[1]):
         m, s = means[j], stds[j]
-        # Applica il filtro Sigma solo dove il dato esiste
-        mask = (data_cp0[:, j] < m - n_sigma*s) | (data_cp0[:, j] > m + n_sigma*s)
-        data_cp0[mask, j] = np.nan
+        mask = (data_processed[:, j] < m - n_sigma*s) | (data_processed[:, j] > m + n_sigma*s)
+        # Sostituisce con la media come nel VBA [cite: 127]
+        data_processed[mask, j] = m
         
-    # Restituisce il DataFrame pulito senza forzare ffill() o fillna(0)
-    return pd.DataFrame(data_cp0, index=df_values.index)
+    return pd.DataFrame(data_processed, index=df_values.index)
+
+# --- FUNZIONE ESPORTAZIONE EXCEL (LOGICA VBA ) ---
+def export_to_excel(df_raw, l_barra):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Layer C (mm)
+        df_c = l_barra * np.sin(np.radians(df_raw.replace(0, np.nan)))
+        df_c.to_excel(writer, sheet_name='Layer_C')
+        
+        # Layer C0 (Delta rispetto a t0)
+        df_c0 = df_c - df_c.iloc[0, :]
+        df_c0.to_excel(writer, sheet_name='Layer_C0')
+        
+    return output.getvalue()
 
 # --- ESECUZIONE PRINCIPALE ---
 if check_password():
@@ -85,11 +104,7 @@ if check_password():
         
         st.divider()
         st.subheader("🎬 GRAFICO DINAMICO")
-        step_video = st.select_slider(
-            "Intervallo:",
-            options=["Ogni Lettura", "1 Giorno", "2 Giorni", "3 Giorni", "1 Settimana"],
-            value="1 Giorno"
-        )
+        step_video = st.select_slider("Intervallo:", options=["Ogni Lettura", "1 Giorno", "2 Giorni", "3 Giorni", "1 Settimana"], value="1 Giorno")
         vel_animazione = st.slider("Velocità Video (ms)", 100, 2000, 400)
         
         st.divider()
@@ -98,6 +113,14 @@ if check_password():
         sigma_val = st.slider("Sigma Gauss (σ)", 1.0, 4.0, 2.0)
         limit_val = st.number_input("Limiti ordinate graph (mm)", value=30.0)
         
+        if file_input:
+            st.divider()
+            if st.button("📥 Esporta Excel Elaborato"):
+                # Carica dati grezzi per l'export
+                df_raw_all = pd.read_excel(file_input) # Semplificato per l'esempio
+                excel_data = export_to_excel(df_raw_all.select_dtypes(include=[np.number]), l_barra)
+                st.download_button("Scarica File .xlsx", data=excel_data, file_name="Dati_Elaborati_DIMOS.xlsx")
+
         if st.button("Logout"):
             st.session_state["auth"] = False
             st.rerun()
@@ -113,16 +136,21 @@ if check_password():
             df_full = pd.read_excel(file_input, sheet_name=sel_sheet)
             df_full.columns = [str(c).strip() for c in df_full.columns]
             
+            # Formattazione data italiana per la visualizzazione [Richiesta 3]
+            time_col = pd.to_datetime(df_full['Data e Ora'])
+            time_col_str = time_col.dt.strftime('%d/%m/%Y %H:%M:%S')
+
+            found_cols = [c for c in df_full.columns if "CL_" in c and f"_{asse_sel}" in c]
+            
+            # Ordinamento sensori tramite foglio ARRAY [cite: 122, 123]
             sensor_order = []
             if "ARRAY" in xls.sheet_names:
                 df_array = pd.read_excel(file_input, sheet_name="ARRAY", header=None)
                 row_array = df_array[df_array[0] == sel_sheet]
                 if not row_array.empty:
-                    sensor_order = row_array.iloc[0, 1:].dropna().astype(float).astype(int).astype(str).tolist()
-                    sensor_order = [s.zfill(3) for s in sensor_order]
+                    sensor_order = row_array.iloc[0, 1:].dropna().astype(str).tolist()
+                    sensor_order = [s.split('.')[0].zfill(3) for s in sensor_order]
 
-            found_cols = [c for c in df_full.columns if "CL_" in c and f"_{asse_sel}" in c]
-            
             if sensor_order:
                 ordered_cols = []
                 for s_id in sensor_order:
@@ -133,15 +161,15 @@ if check_password():
                 sensor_cols = found_cols
 
             if sensor_cols:
-                time_col = pd.to_datetime(df_full['Data e Ora'])
-                # Rimosso .ffill() dalla chiamata della funzione
                 df_cp0 = elaborazione_vba_originale(df_full[sensor_cols], l_barra, sigma_val, limit_val)
                 labels = [re.search(r'CL_(\d+)', c).group(1) for c in sensor_cols]
 
-                st.subheader(f"🎬 Monitoraggio Deformata {asse_sel}: {sel_sheet}")
+                # Rimosso titolo barrato nell'immagine [Richiesta 3]
+                st.subheader(f"Monitoraggio Deformata {asse_sel}: {sel_sheet}")
                 df_calc = df_cp0.copy()
                 df_calc['Data_Ora'] = time_col
                 
+                # Gestione campionamento temporale
                 if step_video == "1 Giorno": df_sampled = df_calc.groupby(df_calc['Data_Ora'].dt.date).first()
                 elif "Giorni" in step_video: 
                     days = int(step_video.split()[0])
@@ -163,23 +191,40 @@ if check_password():
                     xaxis=dict(type='category', tickangle=-90, title="ID Sensore"),
                     yaxis=dict(range=[-limit_val-5, limit_val+5], title="mm"),
                     height=650, template="plotly_white",
-                    sliders=[{"steps": [{"method": "animate", "label": str(t), 
-                              "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": True}}]} for i, t in enumerate(df_sampled.index)]}]
+                    sliders=[{"steps": [{"method": "animate", "label": t.strftime('%d/%m/%Y'), # Data Italiana [Richiesta 3]
+                                     "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": True}}]} for i, t in enumerate(df_sampled.index)]}]
                 )
                 
                 frames = [go.Frame(data=[go.Scatter(x=labels, y=df_sampled.iloc[i],
-                          text=[f"{v:.2f}" if pd.notnull(v) else "" for v in df_sampled.iloc[i]],
-                          marker=dict(size=12, color=['red' if pd.notnull(v) and abs(v)>=5 else 'orange' if pd.notnull(v) and abs(v)>=2 else 'green' if pd.notnull(v) else 'rgba(0,0,0,0)' for v in df_sampled.iloc[i]]))], name=str(i)) for i in range(len(df_sampled))]
+                                 text=[f"{v:.2f}" if pd.notnull(v) else "" for v in df_sampled.iloc[i]])], name=str(i)) for i in range(len(df_sampled))]
                 fig_vid.frames = frames
                 st.plotly_chart(fig_vid, use_container_width=True)
 
                 st.divider()
-                st.subheader("📈 GRAFICO - Trend Temporale")
-                sel_sens = st.multiselect("Seleziona sensori:", labels, default=labels[:3] if len(labels)>3 else labels)
+                # Grafico Trend Temporale senza titoli extra [Richiesta 3]
+                st.subheader("Trend Temporale")
+                sel_sens = st.multiselect("Seleziona sensori:", labels, default=labels[:1])
                 if sel_sens:
                     fig_hist = go.Figure()
                     for s in sel_sens:
                         idx_s = labels.index(s)
-                        fig_hist.add_trace(go.Scatter(x=time_col, y=df_cp0.iloc[:, idx_s], name=f"CL_{s}", connectgaps=False))
-                    fig_hist.update_layout(xaxis=dict(tickangle=-90), hovermode="x unified", template="plotly_white")
+                        y_data = df_cp0.iloc[:, idx_s]
+                        
+                        # 4. MEDIA MOBILE 5 PUNTI (Logica VBA )
+                        y_smooth = y_data.rolling(window=5, center=True).mean()
+                        
+                        fig_hist.add_trace(go.Scatter(x=time_col, y=y_smooth, name=f"CL_{s} (Media Mobile)", connectgaps=False))
+                        
+                        # 4. TRENDLINE POLINOMIALE 3° ORDINE (Logica VBA )
+                        valid_mask = ~np.isnan(y_data)
+                        if valid_mask.any():
+                            x_num = np.arange(len(y_data))
+                            z = np.polyfit(x_num[valid_mask], y_data[valid_mask], 3)
+                            p = np.poly1d(z)
+                            fig_hist.add_trace(go.Scatter(x=time_col, y=p(x_num), name=f"Trend Polinomiale CL_{s}", line=dict(dash='dash', color='red')))
+
+                    fig_hist.update_layout(
+                        xaxis=dict(tickangle=-45, tickformat="%d/%m/%Y"), # Data Italiana [Richiesta 3]
+                        hovermode="x unified", template="plotly_white"
+                    )
                     st.plotly_chart(fig_hist, use_container_width=True)
