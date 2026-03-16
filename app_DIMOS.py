@@ -153,7 +153,7 @@ if check_password():
         """
         <style>
             [data-testid="stSidebar"] {
-                background-color: #f0f2f6;
+                background-color: #B3CEE5;
             }
         </style>
         """,
