@@ -148,6 +148,18 @@ def crea_report_word(df_data, time_col, sensor_labels):
 
 # --- ESECUZIONE ---
 if check_password():
+    # IMPLEMENTAZIONE COLORE SFONDO SIDEBAR
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] {
+                background-color: #f0f2f6;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     p_main_logo = get_asset_path("logo_dimos.jpg")
     if os.path.exists(p_main_logo): st.image(p_main_logo, width=600)
 
@@ -180,7 +192,7 @@ if check_password():
                 df_cp0 = elaborazione_vba_completa(df_full[sensor_cols], l_barra, sigma_val)
                 labels = [re.search(r'CL_(\d+)', c).group(1) for c in sensor_cols]
                 
-                # Parte Animazione (Pesante, ma protetta dal Fragment sotto)
+                # Parte Animazione
                 color_matrix = precalcola_colori(df_cp0)
                 data_matrix = df_cp0.values
                 st.subheader(f"🎬 Animazione Deformata Asse {asse_sel}")
@@ -202,7 +214,7 @@ if check_password():
                 fig_vid.frames = genera_frames_animazione(data_matrix, color_matrix, labels)
                 st.plotly_chart(fig_vid, use_container_width=True)
 
-                # CHIAMATA AL FRAMMENTO (Questa parte ora è isolata e velocissima)
+                # CHIAMATA AL FRAMMENTO (Aggiornamento isolato per multiselect)
                 render_trend_analysis(df_cp0, time_col, labels)
 
         with tab2:
