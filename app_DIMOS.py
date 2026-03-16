@@ -48,13 +48,9 @@ def check_password():
 # --- MOTORE DI CALCOLO (CONGRUENTE VBA) ---
 @st.cache_data(show_spinner=False)
 def elaborazione_vba_completa(df_values, l_barra, n_sigma):
-    # 1. BONIFICA ZERI
-    df_values = df_values.replace(0, np.nan)
-    # Conversione gradi -> mm
+    df_values = df_values.replace(0, np.nan) # 1. Bonifica Zeri
     data_mm = l_barra * np.sin(np.radians(df_values.values))
-    # 2. DELTA SINGOLO (C0)
-    data_c0 = data_mm - data_mm[0, :]
-    # Filtraggio Outlier Sigma Gauss
+    data_c0 = data_mm - data_mm[0, :] # 2. Delta Singolo (C0)
     data_processed = data_c0.copy()
     means = np.nanmean(data_processed, axis=0)
     stds = np.nanstd(data_processed, axis=0)
@@ -72,7 +68,6 @@ def precalcola_colori(df):
         if abs_v >= 5: return 'red'
         if abs_v >= 2: return 'orange'
         return 'green'
-    # Applichiamo la funzione a tutta la matrice per velocizzare il refresh
     return df.map(get_color).values
 
 # --- FUNZIONE ESPORTAZIONE EXCEL (C, C0, CP0) ---
@@ -120,8 +115,7 @@ def crea_report_word(df_data, time_col, sensor_labels):
 # --- ESECUZIONE ---
 if check_password():
     p_main_logo = get_asset_path("logo_dimos.jpg")
-    if os.path.exists(p_main_logo):
-        st.image(p_main_logo, width=600)
+    if os.path.exists(p_main_logo): st.image(p_main_logo, width=600)
 
     with st.sidebar:
         p_micro = get_asset_path("logo_microgeo.jpg")
@@ -132,7 +126,7 @@ if check_password():
         l_barra = st.number_input("Lunghezza Barra (mm)", value=3000)
         sigma_val = st.slider("Sigma Gauss", 1.0, 4.0, 2.0)
         limit_val = st.number_input("Limite Grafico (mm)", value=30.0)
-        vel_animazione = st.slider("Velocità Video (ms)", 50, 1000, 200) # Più veloce
+        vel_animazione = st.slider("Velocità Video (ms)", 50, 1000, 200)
         if st.button("Logout"):
             st.session_state["auth"] = False
             st.rerun()
@@ -149,17 +143,14 @@ if check_password():
             sensor_cols = [c for c in df_full.columns if "CL_" in str(c) and f"_{asse_sel}" in str(c)]
             
             if sensor_cols:
-                # Calcolo dati una volta sola
                 df_cp0 = elaborazione_vba_completa(df_full[sensor_cols], l_barra, sigma_val)
                 labels = [re.search(r'CL_(\d+)', c).group(1) for c in sensor_cols]
                 
-                # PRE-CALCOLO COLORI PER FLUIDITÀ (Richiesta ottimizzazione)
+                # 1. ANIMAZIONE OTTIMIZZATA
                 color_matrix = precalcola_colori(df_cp0)
                 data_matrix = df_cp0.values
-                
                 st.subheader(f"🎬 Animazione Deformata Asse {asse_sel}")
                 
-                # Costruzione Grafico Ottimizzato
                 fig_vid = go.Figure()
                 fig_vid.add_trace(go.Scatter(
                     x=labels, y=data_matrix[0],
@@ -168,30 +159,48 @@ if check_password():
                     textposition="top center",
                     marker=dict(size=12, color=color_matrix[0])
                 ))
-
                 fig_vid.update_layout(
                     xaxis=dict(type='category', title="ID Sensore"),
                     yaxis=dict(range=[-limit_val, limit_val], title="mm"),
-                    height=600, template="plotly_white",
-                    sliders=[{
-                        "active": 0,
-                        "steps": [{"method": "animate", "label": t.strftime('%d/%m/%Y %H:%M'), 
-                                   "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": False}}]} 
-                                  for i, t in enumerate(time_col)]
-                    }]
+                    height=500, template="plotly_white",
+                    sliders=[{"active": 0, "steps": [{"method": "animate", "label": t.strftime('%d/%m/%Y %H:%M'), 
+                               "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": False}}]} 
+                              for i, t in enumerate(time_col)]}]
                 )
-
-                # Frame con dati e colori pre-caricati
-                fig_vid.frames = [go.Frame(
-                    data=[go.Scatter(
-                        x=labels, y=data_matrix[i],
-                        text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[i]],
-                        marker=dict(color=color_matrix[i])
-                    )],
-                    name=str(i)
-                ) for i in range(len(data_matrix))]
-                
+                fig_vid.frames = [go.Frame(data=[go.Scatter(x=labels, y=data_matrix[i],
+                    text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[i]],
+                    marker=dict(color=color_matrix[i]))], name=str(i)) for i in range(len(data_matrix))]
                 st.plotly_chart(fig_vid, use_container_width=True)
+
+                # 2. TREND TEMPORALE SINGOLI SENSORI (RIPRISTINATO)
+                st.divider()
+                st.subheader("📈 Analisi Dettaglio Sensore")
+                sel_sens = st.multiselect("Seleziona sensori da visualizzare:", labels, default=labels[:1] if labels else [])
+                
+                if sel_sens:
+                    fig_trend = go.Figure()
+                    for s_id in sel_sens:
+                        idx = labels.index(s_id)
+                        y_val = df_cp0.iloc[:, idx]
+                        
+                        # Calcolo Media Mobile (5pt come VBA)
+                        y_mm = y_val.rolling(window=5, center=True).mean()
+                        fig_trend.add_trace(go.Scatter(x=time_col, y=y_mm, name=f"CL_{s_id} Media Mobile", mode='lines'))
+                        
+                        # Calcolo Trendline Polinomiale (3° grado come VBA)
+                        valid = ~np.isnan(y_val)
+                        if valid.any():
+                            x_num = np.arange(len(y_val))
+                            z = np.polyfit(x_num[valid], y_val[valid], 3)
+                            p = np.poly1d(z)
+                            fig_trend.add_trace(go.Scatter(x=time_col, y=p(x_num), name=f"Trend {s_id}", line=dict(dash='dash')))
+                    
+                    fig_trend.update_layout(
+                        xaxis=dict(tickformat="%d/%m/%Y", title="Data"),
+                        yaxis=dict(title="Spostamento (mm)"),
+                        template="plotly_white", height=450
+                    )
+                    st.plotly_chart(fig_trend, use_container_width=True)
 
         with tab2:
             st.subheader("Generazione Output")
