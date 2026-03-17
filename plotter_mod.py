@@ -2,129 +2,100 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import re
+import locale
 from io import BytesIO
 
 def run_plotter():
-    st.header("📉 PLOTTER - Analisi Multi-Sensore")
+    st.header("📉 PLOTTER - Analisi per Grandezza Fisica")
     
-    st.sidebar.header("⚙️ Configurazione Plotter")
-    file_input = st.sidebar.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="plotter_upload")
+    st.sidebar.header("⚙️ Configurazione")
+    file_input = st.sidebar.file_uploader("Carica Excel", type=['xlsx', 'xlsm'], key="plotter_final")
 
     if not file_input:
-        st.info("Carica il file Excel per visualizzare i sensori disponibili (Foglio NAME richiesto).")
+        st.info("Carica il file Excel per iniziare. Il sistema leggerà il foglio 'NAME' per organizzare i sensori.")
         return
 
     try:
-        # Lettura del file Excel
         xls = pd.ExcelFile(file_input)
-        
         if 'NAME' not in xls.sheet_names:
-            st.error("Errore: Il foglio 'NAME' non esiste in questo file.")
+            st.error("Manca il foglio 'NAME'.")
             return
         
-        # 1. Analisi Struttura Intestazioni dal foglio NAME (Righe 1, 2, 3)
-        # Leggiamo le prime 3 righe (header=None per gestire i dati grezzi)
+        # 1. Lettura Mappa Sensori (Righe 1, 2, 3)
         df_header = pd.read_excel(file_input, sheet_name='NAME', header=None, nrows=3)
         
         sensor_map = []
-        # Cicliamo sulle colonne (saltando la prima che solitamente è la data o etichetta)
         for col in range(1, len(df_header.columns)):
-            datalogger = str(df_header.iloc[0, col]) # Riga 1
-            nome_umano = str(df_header.iloc[1, col]) # Riga 2
-            info_raw = str(df_header.iloc[2, col])   # Riga 3 (ID informatico + unità)
+            datalogger = str(df_header.iloc[0, col])
+            nome_umano = str(df_header.iloc[1, col])
+            info_tech = str(df_header.iloc[2, col]) # ID esatto nel foglio dati
             
-            # Estrazione unità di misura (cerca tra parentesi quadre o tonde)
-            unita = "Generico"
-            match = re.search(r'[\[\(](.*?)[\]\)]', info_raw)
-            if match:
-                unita = match.group(1)
-            elif "°C" in info_raw: unita = "°C"
-            elif "mm" in info_raw: unita = "mm"
-            elif "Volt" in info_raw or " V " in info_raw: unita = "Volt"
-                
+            # Estrazione Unità (es. Volt, °C, mm)
+            unita = "Altro"
+            if "volt" in info_tech.lower() or "[V]" in info_tech.upper(): unita = "Batteria (Volt)"
+            elif "°C" in info_tech or "temp" in info_tech.lower(): unita = "Temperatura (°C)"
+            elif "mm" in info_tech.lower(): unita = "Spostamento (mm)"
+            elif "°" in info_tech: unita = "Inclinazione (°)"
+            
             sensor_map.append({
-                'id_tech': info_raw,
-                'label': f"{nome_umano} [{unita}] ({datalogger})",
-                'datalogger': datalogger,
-                'unita': unita
+                'id': info_tech,
+                'label': f"{nome_umano} ({datalogger})",
+                'unita': unita,
+                'logger': datalogger
             })
 
-        # 2. Interfaccia di Selezione e Filtri
-        st.subheader("Filtri e Selezione Sensori")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            all_units = sorted(list(set([s['unita'] for s in sensor_map])))
-            tipo_sel = st.multiselect("Filtra per Grandezza:", all_units, default=all_units)
-        with c2:
-            all_loggers = sorted(list(set([s['datalogger'] for s in sensor_map])))
-            logger_sel = st.multiselect("Filtra per Datalogger:", all_loggers, default=all_loggers)
+        # 2. Selezione Sequenziale
+        st.subheader("1. Seleziona cosa vuoi monitorare")
+        unita_disponibili = sorted(list(set([s['unita'] for s in sensor_map])))
+        tipo_scelto = st.selectbox("Grandezza Fisica:", unita_disponibili)
 
-        # Filtriamo la lista in base ai criteri scelti
-        sensori_filtrati = [s for s in sensor_map if s['unita'] in tipo_sel and s['datalogger'] in logger_sel]
-        opzioni_finali = {s['label']: s for s in sensori_filtrati}
+        st.subheader(f"2. Seleziona sensori per {tipo_scelto}")
+        # Filtriamo i sensori che appartengono solo alla grandezza scelta
+        sensori_filtrati = [s for s in sensor_map if s['unita'] == tipo_scelto]
+        opzioni = {s['label']: s['id'] for s in sensori_filtrati}
         
-        selezione = st.multiselect("Scegli i sensori da plottare:", list(opzioni_finali.keys()))
+        selezione_nomi = st.multiselect("Sensori disponibili:", list(opzioni.keys()))
 
-        if selezione:
-            # Carichiamo i dati (il primo foglio che non è NAME)
-            data_sheet_name = [s for s in xls.sheet_names if s != 'NAME'][0]
-            df_data = pd.read_excel(file_input, sheet_name=data_sheet_name)
+        if selezione_nomi:
+            # Caricamento dati (primo foglio utile)
+            data_sheet = [s for s in xls.sheet_names if s != 'NAME'][0]
+            df_data = pd.read_excel(file_input, sheet_name=data_sheet)
             
-            # Cerchiamo la colonna temporale
-            time_col = None
-            for col in df_data.columns:
-                if 'data' in str(col).lower() or 'ora' in str(col).lower():
-                    time_col = col
-                    df_data[time_col] = pd.to_datetime(df_data[time_col])
+            # Gestione Date in Italiano
+            col_tempo = None
+            for c in df_data.columns:
+                if 'data' in str(c).lower():
+                    col_tempo = c
+                    df_data[col_tempo] = pd.to_datetime(df_data[col_tempo])
                     break
             
-            x_axis = df_data[time_col] if time_col else df_data.index
-
-            # 3. Creazione del Grafico
+            # 3. Grafico Plotly
             fig = go.Figure()
-            
-            for nome_sel in selezione:
-                s_info = opzioni_finali[nome_sel]
-                col_id = s_info['id_tech']
-                
-                if col_id in df_data.columns:
+            for nome in selezione_nomi:
+                id_colonna = opzioni[nome]
+                if id_colonna in df_data.columns:
                     fig.add_trace(go.Scatter(
-                        x=x_axis, 
-                        y=df_data[col_id],
-                        name=nome_sel,
-                        mode='lines',
-                        hovertemplate=f"Valore: %{{y:.2f}} {s_info['unita']}<br>Data: %{{x}}"
+                        x=df_data[col_tempo] if col_tempo else df_data.index,
+                        y=df_data[id_colonna],
+                        name=nome,
+                        mode='lines+markers'
                     ))
-                else:
-                    st.warning(f"Dati non trovati per la colonna: {col_id}")
-
+            
             fig.update_layout(
                 template="plotly_white",
+                height=550,
+                xaxis_title="Data e Ora",
+                yaxis_title=tipo_scelto,
                 hovermode="x unified",
-                xaxis_title="Tempo",
-                yaxis_title="Valore Misurato",
-                height=600,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                # Formattazione data asse X in stile italiano
+                xaxis=dict(tickformat="%d %b %Y\n%H:%M", tickfont=dict(size=10))
             )
             
             st.plotly_chart(fig, use_container_width=True)
 
-            # 4. Esportazione
-            if st.button("📊 Prepara Export Excel"):
-                cols_to_export = ([time_col] if time_col else []) + [opzioni_finali[n]['id_tech'] for n in selezione]
-                df_export = df_data[cols_to_export]
-                
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df_export.to_excel(writer, index=False, sheet_name='Dati_Plotter')
-                
-                st.download_button(
-                    label="📥 Scarica Excel Dati Selezionati",
-                    data=output.getvalue(),
-                    file_name="export_plotter.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+            # Export
+            csv = df_data[[col_tempo] + [opzioni[n] for n in selezione_nomi]].to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Scarica Dati (CSV)", csv, "export_plotter.csv", "text/csv")
 
     except Exception as e:
-        st.error(f"Si è verificato un errore: {e}")
+        st.error(f"Errore tecnico: {e}")
