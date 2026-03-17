@@ -1,16 +1,36 @@
 import streamlit as st
-# Importiamo i moduli dalle altre cartelle/file
-import elettrolivelle_mod 
+import elettrolivelle_mod  # Deve esistere questo file nel tuo GitHub
 
-# --- NAVIGAZIONE ---
-if "pagina" not in st.session_state:
-    st.session_state["pagina"] = "Home"
+# --- CONFIGURAZIONE PAGINA ---
+st.set_page_config(page_title="DIMOS Platform", layout="wide")
 
-def navigation():
+# --- LOGIN (Ripristinato) ---
+def check_password():
+    if "auth" not in st.session_state:
+        st.session_state["auth"] = False
+    if st.session_state["auth"]:
+        return True
+    
+    # Se non autenticato, mostra il form
+    st.image("logo_dimos.jpg", width=300)
+    user_id = st.text_input("ID Utente")
+    password = st.text_input("Password", type="password")
+    if st.button("Entra"):
+        if user_id == "dimos" and password == "micai!":
+            st.session_state["auth"] = True
+            st.rerun()
+        else:
+            st.error("Credenziali errate")
+    return False
+
+if check_password():
+    # --- NAVIGAZIONE ---
+    if "pagina" not in st.session_state:
+        st.session_state["pagina"] = "Home"
+
     with st.sidebar:
-        st.image("logo_microgeo.jpg")
+        st.image("logo_microgeo.jpg", use_container_width=True)
         if st.session_state["pagina"] == "Home":
-            st.markdown("### Menu Applicazioni")
             if st.button("📏 Elettrolivelle"):
                 st.session_state["pagina"] = "Elettrolivelle"
                 st.rerun()
@@ -22,18 +42,11 @@ def navigation():
                 st.session_state["pagina"] = "Home"
                 st.rerun()
 
-# --- LOGICA DI CARICAMENTO ---
-navigation()
-
-if st.session_state["pagina"] == "Home":
-    st.image("logo_dimos.jpg")
-    st.title("Piattaforma DIMOS")
-    st.write("Seleziona un'applicazione dalla sidebar.")
-
-elif st.session_state["pagina"] == "Elettrolivelle":
-    # Qui chiamiamo il file esterno!
-    elettrolivelle_mod.run_elettrolivelle()
-
-elif st.session_state["pagina"] == "Paratie":
-    st.title("Modulo Paratie")
-    st.write("Contenuto caricato dal file paratie.py")
+    # --- LOGICA CARICAMENTO MODULI ---
+    if st.session_state["pagina"] == "Home":
+        st.title("Benvenuto in DIMOS")
+        st.info("Seleziona un modulo dalla barra laterale.")
+    
+    elif st.session_state["pagina"] == "Elettrolivelle":
+        # Questo comando cerca la funzione nel file elettrolivelle_mod.py
+        elettrolivelle_mod.run_elettrolivelle()
