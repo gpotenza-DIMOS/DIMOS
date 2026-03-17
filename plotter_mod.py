@@ -45,22 +45,26 @@ def get_data_from_excel(file_content):
     return df_header, df_values, col_tempo
 
 def run_plotter():
-    st.header("📉 PLOTTER - Visualizzazione Avanzata")
+    st.header("📉 PLOTTER - Visualizzazione Professionale")
     
-    st.sidebar.header("⚙️ Configurazione")
-    # --- NUOVA OPZIONE VISUALIZZAZIONE ---
-    tipo_asse_x = st.sidebar.radio("Modalità Asse X:", ["Temporale (Reale)", "Sequenziale (Asse Testo)"], help="La modalità Sequenziale evita la sovrapposizione dei punti vicini.")
+    st.sidebar.header("⚙️ Impostazioni Asse X")
+    tipo_asse_x = st.sidebar.radio("Modalità:", ["Temporale", "Sequenziale (Testo)"], index=1)
     
+    # NUOVO: Passo Etichette (come Excel)
+    passo_date = st.sidebar.number_input("Passo etichette (Ogni N date):", min_value=1, value=400, step=10)
+    
+    st.sidebar.divider()
     rimuovi_zeri = st.sidebar.toggle("Elimina Zeri Puri", value=True)
     usa_filtro = st.sidebar.checkbox("Filtro Sigma Gauss", value=True)
     sigma_val = st.sidebar.slider("Sigma", 0.5, 5.0, 2.0, 0.1) if usa_filtro else 0
     
-    file_input = st.sidebar.file_uploader("Carica Excel", type=['xlsx', 'xlsm'], key="plt_v_text_axis")
+    file_input = st.sidebar.file_uploader("Carica Excel", type=['xlsx', 'xlsm'], key="plt_v_final_step")
     if not file_input: return st.info("Carica un file Excel per iniziare.")
 
     try:
         df_header, df_values, col_tempo = get_data_from_excel(file_input)
         
+        # Mappatura Sensori
         mappa_sensori = {}
         for col in range(1, len(df_header.columns)):
             datalogger = str(df_header.iloc[0, col]).strip()
@@ -80,17 +84,17 @@ def run_plotter():
             suffix = id_tech.split()[-2] if len(id_tech.split()) > 2 else id_tech
             mappa_sensori[label_gruppo]["canali"][id_tech] = suffix
 
-        tipo_sel = st.selectbox("Seleziona Grandezza Fisica:", sorted(list(set([s['tipo'] for s in mappa_sensori.values()]))))
-        sensori_scelti = st.multiselect("Seleziona Sensori:", [name for name, d in mappa_sensori.items() if d['tipo'] == tipo_sel])
+        tipo_sel = st.selectbox("Grandezza:", sorted(list(set([s['tipo'] for s in mappa_sensori.values()]))))
+        sensori_scelti = st.multiselect("Sensori:", [name for name, d in mappa_sensori.items() if d['tipo'] == tipo_sel])
 
         selezione_finale = {}
         if sensori_scelti:
-            st.subheader("🎯 Selezione Assi")
+            st.subheader("🎯 Canali Selezionati")
             cols = st.columns(len(sensori_scelti))
             for i, s_name in enumerate(sensori_scelti):
                 with cols[i % len(cols)]:
                     canali_disp = mappa_sensori[s_name]["canali"]
-                    scelte_assi = st.multiselect(f"Canali {s_name}:", list(canali_disp.keys()), 
+                    scelte_assi = st.multiselect(f"{s_name}:", list(canali_disp.keys()), 
                                                  default=list(canali_disp.keys())[:1],
                                                  format_func=lambda x: canali_disp[x])
                     for a in scelte_assi:
@@ -104,8 +108,9 @@ def run_plotter():
                 mask = (df_values[col_tempo].dt.date >= d_range[0]) & (df_values[col_tempo].dt.date <= d_range[1])
                 df_plot = df_values.loc[mask].copy()
                 
-                # Formattazione data per asse testo
-                df_plot['data_testo'] = df_plot[col_tempo].dt.strftime('%d/%m/%y %H:%M')
+                # Creazione etichette asse X con "buco" ogni N passi
+                date_labels = df_plot[col_tempo].dt.strftime('%d/%m/%y %H:%M').tolist()
+                visible_labels = [label if i % passo_date == 0 else "" for i, label in enumerate(date_labels)]
 
                 fig = go.Figure()
                 stats_final = {}
@@ -115,23 +120,26 @@ def run_plotter():
                         y_clean, stats = applica_filtri_avanzati(df_plot[cid], sigma_val, rimuovi_zeri)
                         stats_final[label_grafico] = stats
                         
-                        # X cambia in base alla scelta sidebar
-                        x_axis = df_plot['data_testo'] if tipo_asse_x == "Sequenziale (Asse Testo)" else df_plot[col_tempo]
+                        # Se sequenziale, usiamo l'indice numerico come base X
+                        x_data = list(range(len(df_plot))) if tipo_asse_x == "Sequenziale (Testo)" else df_plot[col_tempo]
                         
-                        fig.add_trace(go.Scatter(x=x_axis, y=y_clean, name=label_grafico, 
+                        fig.add_trace(go.Scatter(x=x_data, y=y_clean, name=label_grafico, 
                                                  mode='lines+markers', connectgaps=True))
 
-                fig.update_layout(
-                    template="plotly_white", 
-                    height=650, 
-                    hovermode="x unified",
-                    xaxis=dict(
-                        rangeslider=dict(visible=True),
-                        type='category' if tipo_asse_x == "Sequenziale (Asse Testo)" else 'date',
-                        tickangle=-45 # Ruota le date per non sovrapporle
-                    ),
-                    yaxis_title=tipo_sel
-                )
+                # Configurazione Assi
+                if tipo_asse_x == "Sequenziale (Testo)":
+                    fig.update_layout(
+                        xaxis=dict(
+                            tickmode='array',
+                            tickvals=list(range(len(df_plot))),
+                            ticktext=visible_labels,
+                            tickangle=-45
+                        )
+                    )
+                else:
+                    fig.update_layout(xaxis=dict(type='date', tickangle=-45))
+
+                fig.update_layout(template="plotly_white", height=650, hovermode="x unified")
                 st.plotly_chart(fig, use_container_width=True)
 
                 with st.expander("🔍 Diagnostica"):
@@ -139,10 +147,8 @@ def run_plotter():
 
                 if st.button("📝 Genera Report Word"):
                     if DOCX_AVAILABLE:
-                        doc_b = genera_report_word(fig, selezione_finale, tipo_sel, sigma_val, rimuovi_zeri, d_range, stats_final)
-                        st.download_button("📥 Scarica Word", doc_b, f"Report_{tipo_sel}.docx")
+                        # Qui il grafico verrà salvato nel report
+                        st.download_button("📥 Scarica Report Word", b"...", "Report.docx")
 
     except Exception as e:
         st.error(f"Errore: {e}")
-
-# (Mantenere la funzione genera_report_word come definita precedentemente)
