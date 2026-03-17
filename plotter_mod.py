@@ -1,130 +1,130 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-import os
 import re
 from io import BytesIO
 
-# --- GESTIONE LIBRERIA STAMPA ---
-try:
-    from docx import Document
-    from docx.shared import Inches
-    DOCX_AVAILABLE = True
-except ImportError:
-    DOCX_AVAILABLE = False
-
-# --- MOTORE DI CALCOLO ORIGINALE (Invariato) ---
-@st.cache_data(show_spinner=False)
-def elaborazione_vba_completa(df_values, l_barra, n_sigma):
-    # Logica originale: sostituzione 0 con NaN
-    df_values = df_values.replace(0, np.nan)
-    # Calcolo mm: L * sin(rad(deg))
-    data_mm = l_barra * np.sin(np.radians(df_values.values))
-    # Delta rispetto alla prima lettura (C0)
-    data_c0 = data_mm - data_mm[0, :]
-    data_processed = data_c0.copy()
+def run_plotter():
+    st.header("📉 PLOTTER - Analisi Multi-Sensore")
     
-    # Filtro Sigma Gauss
-    means = np.nanmean(data_processed, axis=0)
-    stds = np.nanstd(data_processed, axis=0)
-    for j in range(data_processed.shape[1]):
-        m, s = means[j], stds[j]
-        mask = (data_processed[:, j] < m - n_sigma*s) | (data_processed[:, j] > m + n_sigma*s)
-        data_processed[mask, j] = m
-    return pd.DataFrame(data_processed, index=df_values.index)
+    st.sidebar.header("⚙️ Configurazione Plotter")
+    file_input = st.sidebar.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="plotter_upload")
 
-# --- FUNZIONI DI SUPPORTO GRAFICO ---
-@st.cache_data(show_spinner=False)
-def genera_frames_animazione(data_matrix, color_matrix, labels):
-    return [go.Frame(
-        data=[go.Scatter(
-            x=labels, y=data_matrix[i],
-            text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[i]],
-            marker=dict(color=color_matrix[i])
-        )],
-        name=str(i)
-    ) for i in range(len(data_matrix))]
+    if not file_input:
+        st.info("Carica il file Excel per visualizzare i sensori disponibili (Foglio NAME richiesto).")
+        return
 
-def precalcola_colori(df):
-    def get_color(v):
-        if pd.isnull(v): return 'rgba(0,0,0,0)'
-        abs_v = abs(v)
-        if abs_v >= 5: return 'red'
-        if abs_v >= 2: return 'orange'
-        return 'green'
-    return df.map(get_color).values
-
-@st.fragment
-def render_trend_analysis(df_cp0, time_col, labels):
-    st.divider()
-    st.subheader("📈 Analisi Dettaglio Sensore")
-    sel_sens = st.multiselect("Seleziona sensori:", labels, default=labels[:1] if labels else [])
-    
-    if sel_sens:
-        fig_trend = go.Figure()
-        for s_id in sel_sens:
-            idx = labels.index(s_id)
-            y_val = df_cp0.iloc[:, idx]
-            y_mm = y_val.rolling(window=5, center=True).mean()
-            fig_trend.add_trace(go.Scatter(x=time_col, y=y_mm, name=f"CL_{s_id} Media Mobile", mode='lines'))
-        
-        fig_trend.update_layout(xaxis=dict(title="Data"), yaxis=dict(title="mm"), template="plotly_white", height=450)
-        st.plotly_chart(fig_trend, use_container_width=True)
-
-# --- FUNZIONE PRINCIPALE PER IL MODULO ---
-def run_elettrolivelle():
-    st.header("📏 Monitoraggio Avanzato Elettrolivelle")
-    
-    # I parametri appaiono nella sidebar solo quando il modulo è attivo
-    st.sidebar.header("⚙️ Parametri Modulo")
-    file_input = st.sidebar.file_uploader("Carica Excel", type=['xlsx', 'xlsm'])
-    asse_sel = st.sidebar.selectbox("Asse di Analisi", ["X", "Y", "Z"])
-    l_barra = st.sidebar.number_input("Lunghezza Barra (mm)", value=3000)
-    sigma_val = st.sidebar.slider("Sigma Gauss", 1.0, 4.0, 2.0)
-    limit_val = st.sidebar.number_input("Limite Grafico (mm)", value=30.0)
-    vel_animazione = st.sidebar.slider("Velocità Video (ms)", 50, 1000, 200)
-
-    if file_input:
+    try:
+        # Lettura del file Excel
         xls = pd.ExcelFile(file_input)
-        sheets = [s for s in xls.sheet_names if s not in ["ARRAY", "Info"] and not s.endswith(("C0", "C", "CP0"))]
-        tab1, tab2 = st.tabs(["📊 Analisi Dinamica", "🖨️ Report Word / Export"])
         
-        with tab1:
-            sel_sheet = st.selectbox("Seleziona Layer", sheets)
-            df_full = pd.read_excel(file_input, sheet_name=sel_sheet)
-            time_col = pd.to_datetime(df_full['Data e Ora'])
-            sensor_cols = [c for c in df_full.columns if "CL_" in str(c) and f"_{asse_sel}" in str(c)]
+        if 'NAME' not in xls.sheet_names:
+            st.error("Errore: Il foglio 'NAME' non esiste in questo file.")
+            return
+        
+        # 1. Analisi Struttura Intestazioni dal foglio NAME (Righe 1, 2, 3)
+        # Leggiamo le prime 3 righe (header=None per gestire i dati grezzi)
+        df_header = pd.read_excel(file_input, sheet_name='NAME', header=None, nrows=3)
+        
+        sensor_map = []
+        # Cicliamo sulle colonne (saltando la prima che solitamente è la data o etichetta)
+        for col in range(1, len(df_header.columns)):
+            datalogger = str(df_header.iloc[0, col]) # Riga 1
+            nome_umano = str(df_header.iloc[1, col]) # Riga 2
+            info_raw = str(df_header.iloc[2, col])   # Riga 3 (ID informatico + unità)
             
-            if sensor_cols:
-                # Esecuzione algoritmo originale
-                df_cp0 = elaborazione_vba_completa(df_full[sensor_cols], l_barra, sigma_val)
-                labels = [re.search(r'CL_(\d+)', str(c)).group(1) for c in sensor_cols]
+            # Estrazione unità di misura (cerca tra parentesi quadre o tonde)
+            unita = "Generico"
+            match = re.search(r'[\[\(](.*?)[\]\)]', info_raw)
+            if match:
+                unita = match.group(1)
+            elif "°C" in info_raw: unita = "°C"
+            elif "mm" in info_raw: unita = "mm"
+            elif "Volt" in info_raw or " V " in info_raw: unita = "Volt"
                 
-                # Visualizzazione animazione
-                color_matrix = precalcola_colori(df_cp0)
-                data_matrix = df_cp0.values
+            sensor_map.append({
+                'id_tech': info_raw,
+                'label': f"{nome_umano} [{unita}] ({datalogger})",
+                'datalogger': datalogger,
+                'unita': unita
+            })
+
+        # 2. Interfaccia di Selezione e Filtri
+        st.subheader("Filtri e Selezione Sensori")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            all_units = sorted(list(set([s['unita'] for s in sensor_map])))
+            tipo_sel = st.multiselect("Filtra per Grandezza:", all_units, default=all_units)
+        with c2:
+            all_loggers = sorted(list(set([s['datalogger'] for s in sensor_map])))
+            logger_sel = st.multiselect("Filtra per Datalogger:", all_loggers, default=all_loggers)
+
+        # Filtriamo la lista in base ai criteri scelti
+        sensori_filtrati = [s for s in sensor_map if s['unita'] in tipo_sel and s['datalogger'] in logger_sel]
+        opzioni_finali = {s['label']: s for s in sensori_filtrati}
+        
+        selezione = st.multiselect("Scegli i sensori da plottare:", list(opzioni_finali.keys()))
+
+        if selezione:
+            # Carichiamo i dati (il primo foglio che non è NAME)
+            data_sheet_name = [s for s in xls.sheet_names if s != 'NAME'][0]
+            df_data = pd.read_excel(file_input, sheet_name=data_sheet_name)
+            
+            # Cerchiamo la colonna temporale
+            time_col = None
+            for col in df_data.columns:
+                if 'data' in str(col).lower() or 'ora' in str(col).lower():
+                    time_col = col
+                    df_data[time_col] = pd.to_datetime(df_data[time_col])
+                    break
+            
+            x_axis = df_data[time_col] if time_col else df_data.index
+
+            # 3. Creazione del Grafico
+            fig = go.Figure()
+            
+            for nome_sel in selezione:
+                s_info = opzioni_finali[nome_sel]
+                col_id = s_info['id_tech']
                 
-                fig_vid = go.Figure()
-                fig_vid.add_trace(go.Scatter(
-                    x=labels, y=data_matrix[0], mode='lines+markers+text',
-                    text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[0]],
-                    textposition="top center", marker=dict(size=12, color=color_matrix[0])
-                ))
-                fig_vid.update_layout(
-                    xaxis=dict(type='category', title="ID Sensore"),
-                    yaxis=dict(range=[-limit_val, limit_val], title="mm"),
-                    height=450, template="plotly_white",
-                    sliders=[{"active": 0, "steps": [{"method": "animate", "label": t.strftime('%d/%m/%Y %H:%M'), 
-                               "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": False}}]} 
-                              for i, t in enumerate(time_col)]}]
+                if col_id in df_data.columns:
+                    fig.add_trace(go.Scatter(
+                        x=x_axis, 
+                        y=df_data[col_id],
+                        name=nome_sel,
+                        mode='lines',
+                        hovertemplate=f"Valore: %{{y:.2f}} {s_info['unita']}<br>Data: %{{x}}"
+                    ))
+                else:
+                    st.warning(f"Dati non trovati per la colonna: {col_id}")
+
+            fig.update_layout(
+                template="plotly_white",
+                hovermode="x unified",
+                xaxis_title="Tempo",
+                yaxis_title="Valore Misurato",
+                height=600,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+
+            # 4. Esportazione
+            if st.button("📊 Prepara Export Excel"):
+                cols_to_export = ([time_col] if time_col else []) + [opzioni_finali[n]['id_tech'] for n in selezione]
+                df_export = df_data[cols_to_export]
+                
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df_export.to_excel(writer, index=False, sheet_name='Dati_Plotter')
+                
+                st.download_button(
+                    label="📥 Scarica Excel Dati Selezionati",
+                    data=output.getvalue(),
+                    file_name="export_plotter.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-                fig_vid.frames = genera_frames_animazione(data_matrix, color_matrix, labels)
-                st.plotly_chart(fig_vid, use_container_width=True)
-                
-                render_trend_analysis(df_cp0, time_col, labels)
-            else:
-                st.error(f"Nessun sensore trovato per l'asse {asse_sel} in questo foglio.")
-    else:
-        st.info("Carica un file Excel dalla sidebar per iniziare l'elaborazione.")
+
+    except Exception as e:
+        st.error(f"Si è verificato un errore: {e}")
