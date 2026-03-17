@@ -15,35 +15,10 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="DIMOS - Monitoraggio Avanzato Elettrolivelle", layout="wide")
-
 # --- GESTIONE LOGHI ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def get_asset_path(filename):
     return os.path.join(BASE_DIR, filename)
-
-# --- SISTEMA DI AUTENTICAZIONE ---
-def check_password():
-    if "auth" not in st.session_state:
-        st.session_state["auth"] = False
-    if st.session_state["auth"]:
-        return True
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        p_dimos = get_asset_path("logo_dimos.jpg")
-        if os.path.exists(p_dimos):
-            st.image(p_dimos, use_container_width=True)
-        st.markdown("<h2 style='text-align: center;'>Accesso al Sistema</h2>", unsafe_allow_html=True)
-        user_id = st.text_input("ID Utente")
-        password = st.text_input("Password", type="password")
-        if st.button("Entra"):
-            if user_id == "dimos" and password == "micai!":
-                st.session_state["auth"] = True
-                st.rerun()
-            else:
-                st.error("ID o Password errati.")
-    return False
 
 # --- MOTORE DI CALCOLO (CONGRUENTE VBA - INVARIATO) ---
 @st.cache_data(show_spinner=False)
@@ -80,7 +55,6 @@ def precalcola_colori(df):
         return 'green'
     return df.map(get_color).values
 
-# --- FRAMMENTO PER ANALISI DETTAGLIO (VELOCIZZA IL MULTISELECT) ---
 @st.fragment
 def render_trend_analysis(df_cp0, time_col, labels):
     st.divider()
@@ -93,11 +67,9 @@ def render_trend_analysis(df_cp0, time_col, labels):
             idx = labels.index(s_id)
             y_val = df_cp0.iloc[:, idx]
             
-            # Media Mobile
             y_mm = y_val.rolling(window=5, center=True).mean()
             fig_trend.add_trace(go.Scatter(x=time_col, y=y_mm, name=f"CL_{s_id} Media Mobile", mode='lines'))
             
-            # Trendline Polinomiale
             valid = ~np.isnan(y_val)
             if valid.any():
                 x_num = np.arange(len(y_raw := y_val.values))
@@ -114,7 +86,6 @@ def render_trend_analysis(df_cp0, time_col, labels):
         )
         st.plotly_chart(fig_trend, use_container_width=True)
 
-# --- FUNZIONI EXPORT (INVARIATE) ---
 def export_to_excel_full(df_raw, l_barra, n_sigma):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -146,26 +117,12 @@ def crea_report_word(df_data, time_col, sensor_labels):
         doc.add_picture(img_stream, width=Inches(6)); plt.close()
     out_word = BytesIO(); doc.save(out_word); return out_word.getvalue()
 
-# --- ESECUZIONE ---
-if check_password():
-    # IMPLEMENTAZIONE COLORE SFONDO SIDEBAR
-    st.markdown(
-        """
-        <style>
-            [data-testid="stSidebar"] {
-                background-color: #B3CEE5;
-            }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+# --- FUNZIONE PRINCIPALE DEL MODULO ---
+def run_elettrolivelle():
+    st.header("📏 Monitoraggio Avanzato Elettrolivelle")
 
-    p_main_logo = get_asset_path("logo_dimos.jpg")
-    if os.path.exists(p_main_logo): st.image(p_main_logo, width=600)
-
+    # Inseriamo i parametri nella sidebar (che ora è pulita)
     with st.sidebar:
-        p_micro = get_asset_path("logo_microgeo.jpg")
-        if os.path.exists(p_micro): st.image(p_micro, use_container_width=True)
         st.header("⚙️ Parametri")
         file_input = st.file_uploader("Carica Excel", type=['xlsx', 'xlsm'])
         asse_sel = st.selectbox("Asse di Analisi", ["X", "Y", "Z"])
@@ -173,9 +130,6 @@ if check_password():
         sigma_val = st.slider("Sigma Gauss", 1.0, 4.0, 2.0)
         limit_val = st.number_input("Limite Grafico (mm)", value=30.0)
         vel_animazione = st.slider("Velocità Video (ms)", 50, 1000, 200)
-        if st.button("Logout"):
-            st.session_state["auth"] = False
-            st.rerun()
 
     if file_input:
         xls = pd.ExcelFile(file_input)
@@ -192,7 +146,6 @@ if check_password():
                 df_cp0 = elaborazione_vba_completa(df_full[sensor_cols], l_barra, sigma_val)
                 labels = [re.search(r'CL_(\d+)', c).group(1) for c in sensor_cols]
                 
-                # Parte Animazione
                 color_matrix = precalcola_colori(df_cp0)
                 data_matrix = df_cp0.values
                 st.subheader(f"🎬 Animazione Deformata Asse {asse_sel}")
@@ -213,8 +166,6 @@ if check_password():
                 )
                 fig_vid.frames = genera_frames_animazione(data_matrix, color_matrix, labels)
                 st.plotly_chart(fig_vid, use_container_width=True)
-
-                # CHIAMATA AL FRAMMENTO (Aggiornamento isolato per multiselect)
                 render_trend_analysis(df_cp0, time_col, labels)
 
         with tab2:
@@ -230,3 +181,5 @@ if check_password():
                     with st.spinner("Preparazione Excel..."):
                         excel_out = export_to_excel_full(df_full[sensor_cols], l_barra, sigma_val)
                         st.download_button("Scarica .xlsx", excel_out, "Dati_Elaborati.xlsx")
+    else:
+        st.warning("Carica un file Excel dalla sidebar per iniziare.")
