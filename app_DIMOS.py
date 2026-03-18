@@ -1,69 +1,79 @@
 import streamlit as st
 import os
 
-# CONFIGURAZIONE PAGINA (UNICA PER TUTTA L'APP)
-st.set_page_config(page_title="DIMOS - Software Monitoraggio", layout="wide")
+# Configurazione Pagina
+st.set_page_config(page_title="DIMOS - Monitoring System", layout="wide")
 
-# IMPORTAZIONE MODULI
-from elettrolivelle_mod import run_elettrolivelle
-from plotter_mod import run_plotter
-
+# Funzione per gestire l'accesso
 def check_password():
-    """Ritorna True se le credenziali sono corrette"""
     if "auth" not in st.session_state:
         st.session_state["auth"] = False
-    
     if st.session_state["auth"]:
         return True
 
-    # Schermata di Login
+    # Schermata Login
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 1.5, 1])
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        try:
+        if os.path.exists("logo_dimos.jpg"):
             st.image("logo_dimos.jpg", use_container_width=True)
-        except:
-            st.title("DIMOS")
         
-        st.subheader("🔐 Accesso Riservato")
-        user = st.text_input("ID Utente")
+        st.subheader("🔑 Login di Accesso")
+        user = st.text_input("ID")
         pw = st.text_input("Password", type="password")
         
-        if st.button("Accedi"):
-            # Qui puoi cambiare le tue credenziali
-            if user == "asdf" and pw == "asdf": 
+        if st.button("Accedi", use_container_width=True):
+            if user == "asdf" and pw == "asdf":
                 st.session_state["auth"] = True
                 st.rerun()
             else:
-                st.error("Credenziali non valide")
+                st.error("Credenziali errate")
     return False
 
 if check_password():
-    # SIDEBAR COMUNE
+    # Sidebar fissa con loghi
     with st.sidebar:
-        try:
-            st.image("logo_microgeo.jpg", use_container_width=True)
-        except:
-            pass
-        
+        if os.path.exists("logo_DIMOScircle.jpg"):
+            st.image("logo_DIMOScircle.jpg", width=100)
+        st.title("DIMOS Menu")
+        scelta = st.radio("Navigazione:", ["Home Dashboard", "Elettrolivelle", "Grafici Monitoraggio"])
         st.divider()
-        scelta = st.radio(
-            "Seleziona Strumento:",
-            ["🏠 Home", "📏 Elettrolivelle", "📈 Monitoraggio - Stampe"]
-        )
-        st.divider()
-        if st.button("Logout"):
+        if st.button("Esci"):
             st.session_state["auth"] = False
             st.rerun()
 
-    # LOGICA DI NAVIGAZIONE
-    if scelta == "🏠 Home":
-        st.title("Benvenuto nel Sistema DIMOS")
-        st.write("Seleziona un modulo dal menu laterale per iniziare l'elaborazione.")
-        st.info("I moduli caricano i dati da file Excel secondo gli standard definiti.")
-        
-    elif scelta == "📏 Elettrolivelle":
+    # LOGICA DASHBOARD INIZIALE
+    if scelta == "Home Dashboard":
+        st.title("Piattaforma Integrata DIMOS")
+        st.write("Seleziona lo strumento di calcolo desiderato:")
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        col_el, col_pl = st.columns(2)
+
+        with col_el:
+            st.subheader("📏 Modulo Elettrolivelle")
+            if os.path.exists("montita.jpg"):
+                st.image("montita.jpg", use_container_width=True)
+            if st.button("Apri Calcolo Elettrolivelle", use_container_width=True):
+                st.session_state["scelta_nav"] = "Elettrolivelle"
+                # Forza il cambio stato per la navigazione
+                st.rerun()
+
+        with col_pl:
+            st.subheader("📈 Grafici e Stampe")
+            if os.path.exists("image_6e3d1e.jpg"):
+                st.image("image_6e3d1e.jpg", use_container_width=True)
+            if st.button("Apri Gestione Grafici", use_container_width=True):
+                st.session_state["scelta_nav"] = "Grafici Monitoraggio"
+                st.rerun()
+
+    # Navigazione verso i moduli
+    # Gestione dello stato se cliccato dai bottoni della dashboard
+    nav = st.session_state.get("scelta_nav", scelta)
+
+    if nav == "Elettrolivelle":
+        from elettrolivelle_mod import run_elettrolivelle
         run_elettrolivelle()
-        
-    elif scelta == "📈 Monitoraggio - Stampe":
+    elif nav == "Grafici Monitoraggio":
+        from plotter_mod import run_plotter
         run_plotter()
