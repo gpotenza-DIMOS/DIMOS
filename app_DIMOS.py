@@ -1,17 +1,15 @@
 import streamlit as st
 import os
-import elettrolivelle_mod  # Modulo Elettrolivelle
-import plotter_mod         # Nuovo Modulo Plotter
+import elettrolivelle_mod  # Assicurati che il file si chiami esattamente così
+import plotter_mod       # Assicurati che il file si chiami esattamente così
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="DIMOS Platform", layout="wide")
+st.set_config = st.set_page_config(page_title="DIMOS Platform", layout="wide")
 
-# --- CUSTOM CSS (Sidebar Celeste e Stile Bottoni) ---
+# --- CUSTOM CSS ---
 st.markdown("""
     <style>
-    [data-testid="stSidebar"] { 
-        background-color: #B3CEE5; 
-    }
+    [data-testid="stSidebar"] { background-color: #B3CEE5; }
     .stButton>button {
         width: 100%;
         border-radius: 5px;
@@ -65,16 +63,10 @@ if check_password():
                 st.session_state["pagina"] = "Elettrolivelle"
                 st.rerun()
             if st.button("📈 VISUAL & PLOTTER"): 
-                st.session_state["pagina"] = "Plotter"
+                st.session_state["pagina"] = "Plotter" # <--- Impostiamo "Plotter"
                 st.rerun()
             if st.button("🚧 Paratie"): 
                 st.session_state["pagina"] = "Paratie"
-                st.rerun()
-            if st.button("🌉 Ponti"): 
-                st.session_state["pagina"] = "Ponti"
-                st.rerun()
-            if st.button("🏢 Edifici"): 
-                st.session_state["pagina"] = "Edifici"
                 st.rerun()
         else:
             if st.button("🔙 Torna alla Home"):
@@ -86,27 +78,24 @@ if check_password():
             st.session_state["auth"] = False
             st.rerun()
 
-    # --- CONTENUTO CENTRALE ---
+    # --- ROUTING MODULI ---
     if st.session_state["pagina"] == "Home":
         st.markdown("<br><br>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
-            # Logo circolare scalato (piccolo)
             if os.path.exists("logo_DIMOScircle.jpg"):
                 st.image("logo_DIMOScircle.jpg", width=500)
             else:
                 st.image("logo_dimos.jpg", width=500)
-        
         st.markdown("<h1 style='text-align: center;'>Piattaforma di Monitoraggio Integrata</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; color: gray;'>Gestione sensori, datalogger e analisi deformata.</p>", unsafe_allow_html=True)
-    
-    # --- ROUTING MODULI ---
+
     elif st.session_state["pagina"] == "Elettrolivelle":
-        elettrolivelle_mod.run_elettrolivelle()
-    
-    elif st.session_state["pagina"] == "VISUAL & PLOTTER":
-        plotter_mod.run_plotter()
-        
+        elettrolivelle_mod.main() # Assicurati che la funzione si chiami main() o run()
+
+    elif st.session_state["pagina"] == "Plotter": # <--- Ora coincide con il bottone!
+        plotter_mod.main() # Chiama la funzione main() del file che abbiamo sistemato prima
+
     elif st.session_state["pagina"] == "Paratie":
         st.title("🚧 Modulo Paratie")
         st.info("Sviluppo in corso...")
