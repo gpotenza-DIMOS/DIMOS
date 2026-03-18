@@ -41,7 +41,7 @@ def check_password():
         user_id = st.text_input("ID Utente")
         password = st.text_input("Password", type="password")
         if st.button("Entra"):
-            if user_id == "dimos" and password == "micai!":
+            if user_id == "asd" and password == "asdf":
                 st.session_state["auth"] = True
                 st.rerun()
             else:
@@ -64,7 +64,7 @@ if check_password():
             if st.button("📏 Elettrolivelle"): 
                 st.session_state["pagina"] = "Elettrolivelle"
                 st.rerun()
-            if st.button("📈 PLOTTER"): 
+            if st.button("📈 VISUAL & PLOTTER"): 
                 st.session_state["pagina"] = "Plotter"
                 st.rerun()
             if st.button("🚧 Paratie"): 
@@ -93,9 +93,9 @@ if check_password():
         with c2:
             # Logo circolare scalato (piccolo)
             if os.path.exists("logo_DIMOScircle.jpg"):
-                st.image("logo_DIMOScircle.jpg", width=350)
+                st.image("logo_DIMOScircle.jpg", width=500)
             else:
-                st.image("logo_dimos.jpg", width=350)
+                st.image("logo_dimos.jpg", width=500)
         
         st.markdown("<h1 style='text-align: center;'>Piattaforma di Monitoraggio Integrata</h1>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; color: gray;'>Gestione sensori, datalogger e analisi deformata.</p>", unsafe_allow_html=True)
@@ -104,7 +104,7 @@ if check_password():
     elif st.session_state["pagina"] == "Elettrolivelle":
         elettrolivelle_mod.run_elettrolivelle()
     
-    elif st.session_state["pagina"] == "Plotter":
+    elif st.session_state["pagina"] == "VISUAL & PLOTTER":
         plotter_mod.run_plotter()
         
     elif st.session_state["pagina"] == "Paratie":
