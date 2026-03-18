@@ -1,69 +1,70 @@
 import streamlit as st
 import os
 
-# Configurazione obbligatoria (Solo qui!)
+# 1. Configurazione Pagina (L'unica ammessa in tutto il progetto)
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# CSS "AGRESSIVO" 
+# 2. CSS "BRUTALE" PER COPIARE SCREEN1.JPG
 st.markdown("""
     <style>
-        /* 1. SIDEBAR: Rimuove ogni spazio in alto e imposta il colore */
+        /* Rimuove TUTTI i margini della sidebar */
         [data-testid="stSidebarContent"] {
             background-color: #1a1c23 !important;
-            padding-top: 0px !important;
+            padding: 0rem !important;
         }
         
-        /* 2. LOGO MICROGEO: Lo spinge in alto nell'angolo */
-        .microgeo-top {
-            margin-top: -50px; /* Elimina il gap di Streamlit */
-            margin-left: -10px;
-            margin-bottom: 20px;
-            display: block;
+        /* Forza il Logo Microgeo nell'angolo in alto a sinistra senza spazi */
+        .microgeo-header {
+            width: 100%;
+            padding: 0px !important;
+            margin-top: -60px; /* Sale sopra il margine standard */
+            margin-left: -5px;
         }
 
-        /* 3. PULSANTI SIDEBAR: Incollati, rettangolari, effetto metallo scuro */
+        /* Pulsanti Sidebar: Rettangolari e incollati */
         div.stButton > button {
             width: 100% !important;
             background-color: #2d303d !important;
             color: #ffffff !important;
             border: 1px solid #3d4150 !important;
-            border-radius: 0px !important; /* Rettangolari come screen1 */
+            border-radius: 0px !important;
             text-align: left !important;
             padding: 15px 20px !important;
-            margin-bottom: -1px !important; /* Evita doppio bordo tra bottoni */
-            font-size: 14px !important;
+            margin: 0px !important;
             transition: 0.2s;
         }
-        
-        /* Animazione Hover */
+
+        /* Hover animato con linea rossa */
         div.stButton > button:hover {
             border-left: 5px solid #ff4b4b !important;
             background-color: #3d4150 !important;
             padding-left: 25px !important;
         }
 
-        /* 4. HOME CARD: Combinazione Logo Circle + Montita */
+        /* Card Home moderna */
         .home-card {
             border: 1px solid #ddd;
-            border-radius: 10px;
-            background: white;
-            padding: 0px;
-            overflow: hidden;
+            border-radius: 12px;
+            padding: 15px;
+            background: #ffffff;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        
-        /* Pulizia generale pagina */
+
+        /* Nasconde elementi Streamlit */
         header { visibility: hidden; }
         .block-container { padding-top: 0rem !important; }
+        [data-testid="stSidebarNav"] { display: none; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- SISTEMA LOGIN ---
+# --- LOGIN ---
 if "auth" not in st.session_state:
     st.session_state["auth"] = False
 
 if not st.session_state["auth"]:
-    _, col_login, _ = st.columns([1, 1, 1])
+    _, col_login, _ = st.columns([1, 1.2, 1])
     with col_login:
+        st.markdown("<br><br>", unsafe_allow_html=True)
         if os.path.exists("logo_dimos.jpg"):
             st.image("logo_dimos.jpg")
         with st.container(border=True):
@@ -74,14 +75,14 @@ if not st.session_state["auth"]:
                 if u == "asdf" and p == "asdf":
                     st.session_state["auth"] = True
                     st.rerun()
-                else: st.error("Credenziali Errate")
+                else: st.error("Accesso negato")
     st.stop()
 
-# --- SIDEBAR (LOGO MICROGEO IN ALTO) ---
+# --- SIDEBAR: LOGO MICROGEO IN ALTO A SINISTRA ---
 with st.sidebar:
-    st.markdown('<div class="microgeo-top">', unsafe_allow_html=True)
+    st.markdown('<div class="microgeo-header">', unsafe_allow_html=True)
     if os.path.exists("logo_microgeo.jpg"):
-        st.image("logo_microgeo.jpg", width=250)
+        st.image("logo_microgeo.jpg", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Pulsanti Menu
@@ -94,10 +95,10 @@ with st.sidebar:
         st.session_state["auth"] = False
         st.rerun()
 
-# --- HOME PAGE (LOGO CIRCLE + MONTITA) ---
-page = st.session_state.get("page", "home")
+# --- CONTENUTO PRINCIPALE ---
+pg = st.session_state.get("page", "home")
 
-if page == "home":
+if pg == "home":
     st.title("Piattaforma Integrata DIMOS")
     st.divider()
     
@@ -105,35 +106,37 @@ if page == "home":
     
     with c1:
         with st.container(border=True):
-            # Header della card: Logo Circle + Titolo
-            head1, head2 = st.columns([1, 4])
-            with head1:
+            # Header card: Logo Circle + Titolo
+            h1, h2 = st.columns([1, 4])
+            with h1:
                 if os.path.exists("logo_DIMOScircle.jpg"):
-                    st.image("logo_DIMOScircle.jpg", width=70)
-            with head2:
-                st.markdown("### Modulo Livellometrico")
+                    st.image("logo_DIMOScircle.jpg", width=80)
+            with h2:
+                st.markdown("### Modulo Elettrolivelle")
             
             # Immagine Montita
             if os.path.exists("montita.jpg"):
                 st.image("montita.jpg", use_container_width=True)
             
-            if st.button("AVVIA CALCOLO ELETTROLIVELLE"):
+            if st.button("AVVIA MODULO LIVELLOMETRICO"):
                 st.session_state["page"] = "el"
                 st.rerun()
 
     with c2:
         with st.container(border=True):
-            st.markdown("### Grafici e Report")
+            st.markdown("### Monitoraggio Grafici")
+            # Immagine grafico
             if os.path.exists("image_6e3d1e.jpg"):
                 st.image("image_6e3d1e.jpg", use_container_width=True)
-            if st.button("AVVIA MODULO PLOTTER"):
+            if st.button("AVVIA MODULO GRAFICI"):
                 st.session_state["page"] = "pl"
                 st.rerun()
 
-elif page == "el":
+# --- CARICAMENTO MODULI ESTERNI ---
+elif pg == "el":
     import elettrolivelle_mod
     elettrolivelle_mod.run_elettrolivelle()
 
-elif page == "pl":
+elif pg == "pl":
     import plotter_mod
     plotter_mod.run_plotter()
