@@ -1,81 +1,78 @@
 import streamlit as st
 import os
 
-# Configurazione Pagina
-st.set_page_config(page_title="DIMOS - Monitoring System", layout="wide", initial_sidebar_state="expanded")
+# 1. Configurazione Pagina (Deve essere la prima istruzione)
+st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# --- CSS AVANZATO PER POSIZIONAMENTO E ANIMAZIONI ---
+# 2. CSS Avanzato per ricalcare screen1.jpg
 st.markdown("""
     <style>
-        /* Sfondo Sidebar scuro e pulito */
+        /* Sfondo Sidebar Scuro Totale */
         [data-testid="stSidebar"] {
-            background-color: #1a1c23;
-            border-right: 1px solid #333;
+            background-color: #1a1c23 !important;
+            min-width: 300px !important;
         }
         
-        /* Contenitore Logo Microgeo fisso in fondo alla sidebar */
+        /* Posizionamento Logo Circolare in alto a sinistra senza margini */
+        .logo-top {
+            margin-top: -50px;
+            margin-left: -10px;
+            margin-bottom: 20px;
+        }
+
+        /* Container per i pulsanti per tenerli vicini */
+        .button-container {
+            margin-top: 10px;
+        }
+
+        /* STILE PULSANTI (Grigio scuro, testo allineato a sinistra, animati) */
+        div.stButton > button {
+            width: 100% !important;
+            background-color: #2d303d !important;
+            color: #d1d1d1 !important;
+            border: 1px solid #3d4150 !important;
+            padding: 10px 15px !important;
+            text-align: left !important;
+            font-weight: 500 !important;
+            border-radius: 4px !important;
+            transition: all 0.2s ease !important;
+            display: block !important;
+            margin-bottom: -10px !important; /* Avvicina i pulsanti tra loro */
+        }
+
+        /* Hover: Effetto sollevamento e bordo rosso sottile */
+        div.stButton > button:hover {
+            background-color: #3d4150 !important;
+            color: #ffffff !important;
+            border-color: #ff4b4b !important;
+            transform: translateX(5px) !important; /* Slitta leggermente a destra */
+        }
+
+        /* Active: Effetto click */
+        div.stButton > button:active {
+            transform: scale(0.98) !important;
+            background-color: #1a1c23 !important;
+        }
+
+        /* Posizionamento Logo Microgeo in fondo alla Sidebar */
         .sidebar-footer {
             position: fixed;
-            bottom: 30px;
+            bottom: 20px;
+            left: 20px;
             width: 260px;
-            text-align: center;
         }
 
-        /* STILE PULSANTI MODERNI CON ANIMAZIONE */
-        div.stButton > button {
-            width: 100%;
-            background-color: #2d303d;
-            color: #d1d1d1;
-            border: 1px solid #3d4150;
-            padding: 12px 15px;
-            text-align: left;
-            font-weight: 500;
-            border-radius: 6px;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 2px 2px 8px rgba(0,0,0,0.2);
-            margin-bottom: 5px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            font-size: 0.85rem;
-        }
-
-        /* Hover: si illumina e si alza */
-        div.stButton > button:hover {
-            background-color: #3d4150;
-            color: #ffffff;
-            border-color: #ff4b4b;
-            transform: translateY(-3px);
-            box-shadow: 5px 5px 15px rgba(0,0,0,0.4);
-        }
-
-        /* Active: effetto pressione fisica */
-        div.stButton > button:active {
-            transform: translateY(1px);
-            box-shadow: inset 2px 2px 8px rgba(0,0,0,0.5);
-            background-color: #1a1c23;
-        }
-
-        /* Rimuove elementi inutili di Streamlit */
+        /* Nascondi elementi Streamlit che sporcano il design */
         header {visibility: hidden;}
+        [data-testid="stSidebarNav"] {display: none;}
         .block-container {padding-top: 1rem;}
-        
-        /* Titoli sezioni sidebar */
-        .sidebar-header {
-            color: #555;
-            font-size: 0.7rem;
-            font-weight: bold;
-            margin-top: 20px;
-            margin-bottom: 10px;
-            padding-left: 5px;
-        }
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOGIN (Invariato come richiesto) ---
+# --- FUNZIONE LOGIN (Invariata) ---
 def login():
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
-
     if not st.session_state["authenticated"]:
         col1, col2, col3 = st.columns([1, 1, 1])
         with col2:
@@ -90,30 +87,28 @@ def login():
                     if uid == "asdf" and psw == "asdf":
                         st.session_state["authenticated"] = True
                         st.rerun()
-                    else:
-                        st.error("Credenziali non corrette")
+                    else: st.error("Credenziali non corrette")
         return False
     return True
 
-# --- APP PRINCIPALE ---
+# --- LOGICA APP ---
 if login():
-    # BARRA LATERALE (LAYOUT COME DA SCREENSHOT)
+    # SIDEBAR PERSONALIZZATA
     with st.sidebar:
-        # 1. Logo Circolare in alto
+        # Logo in alto a sinistra
+        st.markdown('<div class="logo-top">', unsafe_allow_html=True)
         if os.path.exists("logo_DIMOScircle.jpg"):
-            st.image("logo_DIMOScircle.jpg", width=120)
+            st.image("logo_DIMOScircle.jpg", width=110)
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        st.markdown('<p class="sidebar-header">MENU PRINCIPALE</p>', unsafe_allow_html=True)
+        # Pulsanti MENU
+        st.markdown('<div class="button-container">', unsafe_allow_html=True)
+        if st.button("🏠 DASHBOARD"): st.session_state["menu"] = "home"
+        if st.button("📏 ELETTROLIVELLE"): st.session_state["menu"] = "livelle"
+        if st.button("📈 GRAFICI & STAMPE"): st.session_state["menu"] = "grafici"
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        # 2. Pulsanti Navigazione
-        if st.button("🏠 DASHBOARD"):
-            st.session_state["menu"] = "home"
-        if st.button("📏 ELETTROLIVELLE"):
-            st.session_state["menu"] = "livelle"
-        if st.button("📈 GRAFICI & STAMPE"):
-            st.session_state["menu"] = "grafici"
-        
-        # 3. Logo Microgeo fisso in fondo
+        # Footer con Logo Microgeo e Logout
         st.markdown('<div class="sidebar-footer">', unsafe_allow_html=True)
         if os.path.exists("logo_microgeo.jpg"):
             st.image("logo_microgeo.jpg", width=180)
@@ -123,34 +118,30 @@ if login():
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- LOGICA PAGINE ---
-    pagine = st.session_state.get("menu", "home")
-
-    if pagine == "home":
+    # CONTENUTO PRINCIPALE
+    pagina = st.session_state.get("menu", "home")
+    
+    if pagina == "home":
         st.title("Piattaforma Integrata DIMOS")
-        st.markdown("---")
-        
+        st.divider()
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("### Analisi Livellometrica")
-            if os.path.exists("montita.jpg"):
-                st.image("montita.jpg", use_container_width=True)
-            if st.button("AVVIA MODULO LIVELLOMETRICO"):
+            st.subheader("Modulo Livellometrico")
+            if os.path.exists("montita.jpg"): st.image("montita.jpg", use_container_width=True)
+            if st.button("APRI ELETTROLIVELLE"):
                 st.session_state["menu"] = "livelle"
                 st.rerun()
-
         with c2:
-            st.markdown("### Monitoraggio & Report")
-            if os.path.exists("image_6e2623.jpg"):
-                st.image("image_6e2623.jpg", use_container_width=True)
-            if st.button("AVVIA MODULO GRAFICI"):
+            st.subheader("Grafici e Stampe")
+            if os.path.exists("image_6e2623.jpg"): st.image("image_6e2623.jpg", use_container_width=True)
+            if st.button("APRI MODULO GRAFICI"):
                 st.session_state["menu"] = "grafici"
                 st.rerun()
 
-    elif pagine == "livelle":
+    elif pagina == "livelle":
         from elettrolivelle_mod import run_elettrolivelle
         run_elettrolivelle()
 
-    elif pagine == "grafici":
+    elif pagina == "grafici":
         from plotter_mod import run_plotter
         run_plotter()
