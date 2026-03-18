@@ -1,27 +1,28 @@
 import streamlit as st
 import os
 
-# 1. Configurazione Pagina (L'unica ammessa in tutto il progetto)
+# Configurazione Pagina (L'unica nel progetto)
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# 2. CSS "BRUTALE" PER COPIARE SCREEN1.JPG
+# --- SCREEN ---
 st.markdown("""
     <style>
-        /* Rimuove TUTTI i margini della sidebar */
+        /* Sidebar: Sfondo scuro e rimozione spazi bianchi in alto */
         [data-testid="stSidebarContent"] {
             background-color: #1a1c23 !important;
-            padding: 0rem !important;
-        }
-        
-        /* Forza il Logo Microgeo nell'angolo in alto a sinistra senza spazi */
-        .microgeo-header {
-            width: 100%;
             padding: 0px !important;
-            margin-top: -60px; /* Sale sopra il margine standard */
+        }
+        .block-container { padding-top: 0rem !important; }
+        header { visibility: hidden; }
+
+        /* Posizionamento Logo Microgeo nell'angolo estremo */
+        .microgeo-box {
+            margin-top: -50px; 
             margin-left: -5px;
+            padding: 10px;
         }
 
-        /* Pulsanti Sidebar: Rettangolari e incollati */
+        /* Pulsanti Sidebar: Grigio scuro, quadrati, attaccati */
         div.stButton > button {
             width: 100% !important;
             background-color: #2d303d !important;
@@ -32,32 +33,31 @@ st.markdown("""
             padding: 15px 20px !important;
             margin: 0px !important;
             transition: 0.2s;
+            text-transform: uppercase;
+            font-size: 13px;
         }
 
-        /* Hover animato con linea rossa */
+        /* Hover Pulsanti: Linea rossa a sinistra */
         div.stButton > button:hover {
             border-left: 5px solid #ff4b4b !important;
             background-color: #3d4150 !important;
             padding-left: 25px !important;
         }
 
-        /* Card Home moderna */
-        .home-card {
-            border: 1px solid #ddd;
-            border-radius: 12px;
+        /* Box Home: Layout Logo Circle + Titolo */
+        .home-header-box {
+            display: flex;
+            align-items: center;
+            background-color: #f8f9fa;
             padding: 15px;
-            background: #ffffff;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border: 1px solid #ddd;
+            border-bottom: none;
+            border-radius: 10px 10px 0 0;
         }
-
-        /* Nasconde elementi Streamlit */
-        header { visibility: hidden; }
-        .block-container { padding-top: 0rem !important; }
-        [data-testid="stSidebarNav"] { display: none; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOGIN ---
+# --- LOGIN (Invariato come richiesto) ---
 if "auth" not in st.session_state:
     st.session_state["auth"] = False
 
@@ -78,20 +78,20 @@ if not st.session_state["auth"]:
                 else: st.error("Accesso negato")
     st.stop()
 
-# --- SIDEBAR: LOGO MICROGEO IN ALTO A SINISTRA ---
+# --- SIDEBAR: LOGO MICROGEO + MENU ---
 with st.sidebar:
-    st.markdown('<div class="microgeo-header">', unsafe_allow_html=True)
+    st.markdown('<div class="microgeo-box">', unsafe_allow_html=True)
     if os.path.exists("logo_microgeo.jpg"):
         st.image("logo_microgeo.jpg", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Pulsanti Menu
+    # Pulsanti incollati tra loro
     if st.button("🏠 DASHBOARD"): st.session_state["page"] = "home"
     if st.button("📏 ELETTROLIVELLE"): st.session_state["page"] = "el"
     if st.button("📈 GRAFICI & STAMPE"): st.session_state["page"] = "pl"
     
     st.markdown("<br><br>", unsafe_allow_html=True)
-    if st.button("🚪 LOGOUT"):
+    if st.button("🚪 ESCI"):
         st.session_state["auth"] = False
         st.rerun()
 
@@ -102,19 +102,19 @@ if pg == "home":
     st.title("Piattaforma Integrata DIMOS")
     st.divider()
     
-    c1, c2 = st.columns(2)
+    col_left, col_right = st.columns(2)
     
-    with c1:
+    with col_left:
+        # Card Elettrolivelle: Logo Circle e Titolo affiancati
         with st.container(border=True):
-            # Header card: Logo Circle + Titolo
-            h1, h2 = st.columns([1, 4])
-            with h1:
+            sub_c1, sub_c2 = st.columns([1, 4])
+            with sub_c1:
                 if os.path.exists("logo_DIMOScircle.jpg"):
                     st.image("logo_DIMOScircle.jpg", width=80)
-            with h2:
+            with sub_c2:
                 st.markdown("### Modulo Elettrolivelle")
             
-            # Immagine Montita
+            # Foto Montita grande
             if os.path.exists("montita.jpg"):
                 st.image("montita.jpg", use_container_width=True)
             
@@ -122,17 +122,17 @@ if pg == "home":
                 st.session_state["page"] = "el"
                 st.rerun()
 
-    with c2:
+    with col_right:
+        # Card Grafici
         with st.container(border=True):
-            st.markdown("### Monitoraggio Grafici")
-            # Immagine grafico
+            st.markdown("### Grafici e Stampe")
             if os.path.exists("image_6e3d1e.jpg"):
                 st.image("image_6e3d1e.jpg", use_container_width=True)
             if st.button("AVVIA MODULO GRAFICI"):
                 st.session_state["page"] = "pl"
                 st.rerun()
 
-# --- CARICAMENTO MODULI ESTERNI ---
+# --- CARICAMENTO MODULI ---
 elif pg == "el":
     import elettrolivelle_mod
     elettrolivelle_mod.run_elettrolivelle()
