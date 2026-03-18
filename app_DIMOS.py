@@ -2,64 +2,76 @@ import streamlit as st
 import os
 
 # Configurazione Pagina
-st.set_page_config(page_title="DIMOS - Dashboard", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="DIMOS - Monitoring System", layout="wide", initial_sidebar_state="expanded")
 
-# --- CSS AVANZATO PER LOOK "SOFTWARE MODERNO" ---
+# --- CSS AVANZATO PER POSIZIONAMENTO E ANIMAZIONI ---
 st.markdown("""
     <style>
-        /* Sfondo e Sidebar */
+        /* Sfondo Sidebar scuro e pulito */
         [data-testid="stSidebar"] {
             background-color: #1a1c23;
             border-right: 1px solid #333;
-            min-width: 300px !important;
         }
         
-        /* Contenitore Logo in basso alla sidebar */
+        /* Contenitore Logo Microgeo fisso in fondo alla sidebar */
         .sidebar-footer {
             position: fixed;
-            bottom: 20px;
+            bottom: 30px;
             width: 260px;
             text-align: center;
         }
 
-        /* STILE BOTTONI MODERNI (Effetto Neumorfico/Industrial) */
+        /* STILE PULSANTI MODERNI CON ANIMAZIONE */
         div.stButton > button {
             width: 100%;
             background-color: #2d303d;
             color: #d1d1d1;
             border: 1px solid #3d4150;
-            padding: 15px 20px;
+            padding: 12px 15px;
             text-align: left;
             font-weight: 500;
-            border-radius: 8px;
-            transition: all 0.2s ease-in-out;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.3);
-            margin-bottom: 10px;
+            border-radius: 6px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 2px 2px 8px rgba(0,0,0,0.2);
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.85rem;
         }
 
-        /* Animazione al passaggio del mouse (Hover) */
+        /* Hover: si illumina e si alza */
         div.stButton > button:hover {
             background-color: #3d4150;
             color: #ffffff;
             border-color: #ff4b4b;
-            transform: translateY(-2px);
-            box-shadow: 4px 4px 10px rgba(0,0,0,0.5);
+            transform: translateY(-3px);
+            box-shadow: 5px 5px 15px rgba(0,0,0,0.4);
         }
 
-        /* Effetto pressione (Click) */
+        /* Active: effetto pressione fisica */
         div.stButton > button:active {
             transform: translateY(1px);
-            box-shadow: inset 2px 2px 5px rgba(0,0,0,0.5);
+            box-shadow: inset 2px 2px 8px rgba(0,0,0,0.5);
             background-color: #1a1c23;
         }
 
-        /* Nascondi header standard Streamlit */
+        /* Rimuove elementi inutili di Streamlit */
         header {visibility: hidden;}
         .block-container {padding-top: 1rem;}
+        
+        /* Titoli sezioni sidebar */
+        .sidebar-header {
+            color: #555;
+            font-size: 0.7rem;
+            font-weight: bold;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            padding-left: 5px;
+        }
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNZIONE LOGGING ---
+# --- LOGIN (Invariato come richiesto) ---
 def login():
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
@@ -70,9 +82,8 @@ def login():
             st.markdown("<br><br>", unsafe_allow_html=True)
             if os.path.exists("logo_dimos.jpg"):
                 st.image("logo_dimos.jpg", use_container_width=True)
-            
             with st.container(border=True):
-                st.subheader("Login di Sistema")
+                st.subheader("Login Accesso")
                 uid = st.text_input("ID")
                 psw = st.text_input("Password", type="password")
                 if st.button("ACCEDI"):
@@ -84,17 +95,17 @@ def login():
         return False
     return True
 
-# --- APPLICAZIONE PRINCIPALE ---
+# --- APP PRINCIPALE ---
 if login():
-    # SIDEBAR
+    # BARRA LATERALE (LAYOUT COME DA SCREENSHOT)
     with st.sidebar:
-        # Logo Circle in Alto
+        # 1. Logo Circolare in alto
         if os.path.exists("logo_DIMOScircle.jpg"):
             st.image("logo_DIMOScircle.jpg", width=120)
         
-        st.markdown("<h3 style='color:white; margin-bottom:20px;'>NAVIGAZIONE</h3>", unsafe_allow_html=True)
+        st.markdown('<p class="sidebar-header">MENU PRINCIPALE</p>', unsafe_allow_html=True)
         
-        # Pulsanti con gestione stato
+        # 2. Pulsanti Navigazione
         if st.button("🏠 DASHBOARD"):
             st.session_state["menu"] = "home"
         if st.button("📏 ELETTROLIVELLE"):
@@ -102,20 +113,21 @@ if login():
         if st.button("📈 GRAFICI & STAMPE"):
             st.session_state["menu"] = "grafici"
         
-        # Logo Microgeo fisso in basso
+        # 3. Logo Microgeo fisso in fondo
         st.markdown('<div class="sidebar-footer">', unsafe_allow_html=True)
         if os.path.exists("logo_microgeo.jpg"):
-            st.image("logo_microgeo.jpg", width=200)
-        if st.button("🚪 LOGOUT"):
+            st.image("logo_microgeo.jpg", width=180)
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🚪 ESCI"):
             st.session_state["authenticated"] = False
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # LOGICA PAGINE
+    # --- LOGICA PAGINE ---
     pagine = st.session_state.get("menu", "home")
 
     if pagine == "home":
-        st.title("Sistema Integrato DIMOS")
+        st.title("Piattaforma Integrata DIMOS")
         st.markdown("---")
         
         c1, c2 = st.columns(2)
@@ -123,16 +135,15 @@ if login():
             st.markdown("### Analisi Livellometrica")
             if os.path.exists("montita.jpg"):
                 st.image("montita.jpg", use_container_width=True)
-            if st.button("LANCIA MODULO LIVELLOMETRICO"):
+            if st.button("AVVIA MODULO LIVELLOMETRICO"):
                 st.session_state["menu"] = "livelle"
                 st.rerun()
 
         with c2:
             st.markdown("### Monitoraggio & Report")
-            # Uso l'immagine del grafico caricata (image_6e2623.jpg)
             if os.path.exists("image_6e2623.jpg"):
                 st.image("image_6e2623.jpg", use_container_width=True)
-            if st.button("LANCIA MODULO GRAFICI"):
+            if st.button("AVVIA MODULO GRAFICI"):
                 st.session_state["menu"] = "grafici"
                 st.rerun()
 
