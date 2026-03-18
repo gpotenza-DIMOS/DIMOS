@@ -3,145 +3,128 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from io import BytesIO
-from datetime import datetime
+from docx import Document
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="DIMOS - Monitoraggio", layout="wide")
-
-# --- HEADER: LOGO E TITOLO ---
-col_logo, col_titolo = st.columns([1, 4])
-with col_logo:
-    try:
-        st.image("logo_dimos.jpg", width=150)
-    except:
-        st.warning("Logo non trovato (caricare logo_dimos.jpg)")
-
-st.markdown("## Dati Monitoraggio - Visualizzazione e stampa")
-st.write("---")
-
-# --- LOGICA FILTRI ---
-def applica_filtri(serie, n_sigma, rimuovi_zeri):
-    originale = serie.copy()
-    diag = {"zeri": 0, "gauss": 0}
-    
+def applica_filtri(serie, sigma, rimuovi_zeri):
+    info = {'zeri_rimossi': 0, 'outliers_gauss': 0}
+    clean_serie = serie.copy()
     if rimuovi_zeri:
-        diag["zeri"] = (originale == 0).sum()
-        originale = originale.replace(0, np.nan)
-    
-    validi = originale.dropna()
-    if not validi.empty and n_sigma > 0:
-        mean, std = validi.mean(), validi.std()
-        if std > 0:
-            lower, upper = mean - n_sigma * std, mean + n_sigma * std
-            outliers = (originale < lower) | (originale > upper)
-            diag["gauss"] = outliers.sum()
-            originale[outliers] = np.nan
-            
-    return originale, diag
+        info['zeri_rimossi'] = int((clean_serie == 0).sum())
+        clean_serie = clean_serie.replace(0, np.nan)
+    if sigma > 0:
+        mean = clean_serie.mean()
+        std = clean_serie.std()
+        outliers = (clean_serie < mean - sigma * std) | (clean_serie > mean + sigma * std)
+        info['outliers_gauss'] = int(outliers.sum())
+        clean_serie[outliers] = np.nan
+    return clean_serie, info
 
-# --- CARICAMENTO E PARSING DATI ---
-uploaded_file = st.sidebar.file_uploader("Carica file CSV o Excel", type=['csv', 'xlsx'])
+def main():
+    # --- HEADER ---
+    col_logo, col_titolo = st.columns([1, 4])
+    with col_logo:
+        try:
+            st.image("logo_dimos.jpg", width=150)
+        except:
+            st.write("📌 Logo DIMOS")
+    with col_titolo:
+        st.markdown("# Dati Monitoraggio - Visualizzazione e stampa")
 
-if uploaded_file:
-    # Caricamento (tentativo con separatore ; o ,)
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df_raw = pd.read_csv(uploaded_file, sep=None, engine='python')
+    # --- SIDEBAR (FILTRI E CARICAMENTO) ---
+    with st.sidebar:
+        st.header("⚙️ Impostazioni Analisi")
+        file_dati = st.file_uploader("Carica File Dati (CSV/XLSX)", type=['csv', 'xlsx'])
+        file_name = st.file_uploader("Carica File NAME (Opzionale)", type=['csv'])
+        st.divider()
+        sigma_val = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0, 0.1)
+        no_zeros = st.checkbox("Elimina valori '0'", value=True)
+
+    if file_dati:
+        df = pd.read_csv(file_dati, sep=None, engine='python')
+        col_data = df.columns[0] # Assumiamo la prima colonna sia il tempo
+        df[col_data] = pd.to_datetime(df[col_data], dayfirst=True, errors='coerce')
+        df = df.dropna(subset=[col_data]).sort_values(col_data)
+
+        # Costruzione gerarchia Centralina -> Sensore
+        gerarchia = {}
+        if file_name:
+            df_n = pd.read_csv(file_name, header=None, sep=None, engine='python')
+            for i, col_name in enumerate(df.columns):
+                if col_name == col_data: continue
+                try:
+                    cent = str(df_n.iloc[0, i]).strip()
+                    sens = str(df_n.iloc[1, i]).strip()
+                except:
+                    cent, sens = "Generale", "Vari"
+                if cent not in gerarchia: gerarchia[cent] = {}
+                if sens not in gerarchia[cent]: gerarchia[cent][sens] = []
+                gerarchia[cent][sens].append(col_name)
         else:
-            df_raw = pd.read_excel(uploaded_file)
-            
-        # Rilevazione struttura NAME (3 righe header) o Standard (1 riga header)
-        # Assumiamo che la prima colonna sia sempre "Data e Ora"
-        
-        st.sidebar.header("⚙️ Impostazioni Analisi e Filtri")
-        rimuovi_zeri = st.sidebar.checkbox("Rimuovi Zeri (0)", value=True)
-        sigma = st.sidebar.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0, 0.1)
+            # Fallback automatico se manca il file NAME
+            for col in df.columns:
+                if col == col_data: continue
+                parts = col.split(' ')
+                cent = parts[0].split('_')[0] + "_" + parts[0].split('_')[1] if '_' in parts[0] else "Centralina"
+                sens = parts[0]
+                if cent not in gerarchia: gerarchia[cent] = {}
+                if sens not in gerarchia[cent]: gerarchia[cent][sens] = []
+                gerarchia[cent][sens].append(col)
 
-        # Pulizia Nomi Colonne e Mapping Gerarchico
-        # Se le prime righe contengono info centralina/sensore, le usiamo
-        cols = df_raw.columns.tolist()
-        mapping = {}
-        
-        for col in cols[1:]: # Escludiamo Data e Ora
-            parts = col.split()
-            # Esempio: CO_9286 BATT [V]
-            centralina = parts[0] if "_" in parts[0] else "Generale"
-            parametro = col
-            mapping[col] = f"{centralina} >> {parametro}"
+        # --- SELEZIONE UI ---
+        st.subheader("🔍 Selezione Sensori")
+        c1, c2 = st.columns(2)
+        with c1:
+            sel_cent = st.multiselect("Centraline", options=sorted(list(gerarchia.keys())))
+        with c2:
+            sens_disponibili = []
+            for c in sel_cent: sens_disponibili.extend(list(gerarchia[c].keys()))
+            sel_sens = st.multiselect("Sensori", options=sorted(list(set(sens_disponibili))))
 
-        # Selezione Centralina/Sensore
-        opzioni = list(mapping.values())
-        scelte = st.sidebar.multiselect("Seleziona Grandezze da visualizzare:", opzioni)
+        # Selezione Temporale
+        min_d, max_d = df[col_data].min().date(), df[col_data].max().date()
+        st.write("**Selezione Periodo (Inizio - Fine)**")
+        t1, t2 = st.columns(2)
+        with t1: start_date = st.date_input("Data Inizio", min_d)
+        with t2: end_date = st.date_input("Data Fine", max_d)
 
-        if scelte:
-            # Conversione data
-            df_raw[cols[0]] = pd.to_datetime(df_raw[cols[0]], dayfirst=True, errors='coerce')
-            df_raw = df_raw.dropna(subset=[cols[0]]).sort_values(cols[0])
+        # --- GRAFICO E REPORT ---
+        colonne_finali = []
+        for c in sel_cent:
+            for s in sel_sens:
+                if s in gerarchia[c]: colonne_finali.extend(gerarchia[c][s])
+
+        if colonne_finali:
+            mask = (df[col_data].dt.date >= start_date) & (df[col_data].dt.date <= end_date)
+            df_plot = df.loc[mask]
             
-            # Filtro Date
-            min_d, max_d = df_raw[cols[0]].min(), df_raw[cols[0]].max()
-            start_date = st.sidebar.date_input("Inizio", min_d)
-            end_date = st.sidebar.date_input("Fine", max_d)
-            
-            mask = (df_raw[cols[0]].dt.date >= start_date) & (df_raw[cols[0]].dt.date <= end_date)
-            df_p = df_raw.loc[mask].copy()
-            
-            # Grafico e Analisi
             fig = go.Figure()
-            stats_final = []
+            report_data = []
 
-            for scelta in scelte:
-                # Trova la colonna originale dal mapping
-                col_orig = [k for k, v in mapping.items() if v == scelta][0]
-                
-                # Applica Filtri
-                serie_filtrata, diag = applica_filtri(df_p[col_orig], sigma, rimuovi_zeri)
-                
-                # Aggiungi al grafico
-                fig.add_trace(go.Scatter(
-                    x=df_p[cols[0]], 
-                    y=serie_filtrata, 
-                    name=scelta,
-                    mode='lines+markers',
-                    connectgaps=False
-                ))
-                
-                diag["Sensore"] = scelta
-                stats_final.append(diag)
+            for col in colonne_finali:
+                y_clean, info = applica_filtri(df_plot[col], sigma_val, no_zeros)
+                info['Parametro'] = col
+                report_data.append(info)
+                fig.add_trace(go.Scatter(x=df_plot[col_data], y=y_clean, name=col))
 
-            # Layout Grafico Dinamico
-            fig.update_layout(
-                template="plotly_white",
-                height=600,
-                hovermode="x unified",
-                xaxis=dict(
-                    rangeselector=dict(
-                        buttons=list([
-                            dict(count=1, label="1d", step="day", stepmode="backward"),
-                            dict(count=7, label="1w", step="day", stepmode="backward"),
-                            dict(step="all")
-                        ])
-                    ),
-                    rangeslider=dict(visible=True),
-                    type="date"
-                ),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-
+            fig.update_layout(xaxis=dict(rangeslider=dict(visible=True)), hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- DIAGNOSTICA ---
-            st.subheader("📊 Report Analisi (Zeri e Gauss)")
-            if stats_final:
-                df_stats = pd.DataFrame(stats_final).set_index("Sensore")
-                st.table(df_stats)
+            # Tabella Gauss e Zeri
+            st.subheader("📋 Report Qualità")
+            st.table(pd.DataFrame(report_data).set_index('Parametro'))
 
-            # --- EXPORT WORD ---
-            if st.button("Genera Report Word"):
-                st.info("Funzionalità export in preparazione...")
-                # Qui si può integrare la funzione genera_report_word definita in precedenza
+            # Export Word
+            if st.button("📄 Genera Report Word"):
+                doc = Document()
+                doc.add_heading('Dati Monitoraggio - DIMOS', 0)
+                doc.add_paragraph(f"Periodo: {start_date} a {end_date}")
+                # Aggiungi qui la logica tabelle/testo per Word
+                buf = BytesIO()
+                doc.save(buf)
+                st.download_button("Scarica Word", buf.getvalue(), "Report.docx")
+    else:
+        st.info("Carica i file nella barra laterale per visualizzare i dati.")
 
-    except Exception as e:
-        st.error(f"Errore nel caricamento: {e}")
-else:
-    st.info("Carica un file dal menu laterale per iniziare.")
+# Essenziale per far funzionare il richiamo dal pulsante
+if __name__ == "__main__":
+    main()
