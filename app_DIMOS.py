@@ -31,7 +31,7 @@ def check_password():
         
         if st.button("Accedi"):
             # Qui puoi cambiare le tue credenziali
-            if user == "admin" and pw == "dimos2024": 
+            if user == "asdf" and pw == "asdf": 
                 st.session_state["auth"] = True
                 st.rerun()
             else:
