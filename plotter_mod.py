@@ -4,35 +4,23 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 from io import BytesIO
-from docx import Document
 
-# --- CONFIGURAZIONE E LOGO ---
-st.set_page_config(layout="wide", page_title="DIMOS Monitoraggio")
-
-# Logo largo 400px
+# --- GESTIONE LIBRERIA WORD ---
 try:
-    st.image("logo_dimos.jpg", width=400)
-except:
-    st.write("### DIMOS SOFTWARE")
+    from docx import Document
+    WORD_OK = True
+except ImportError:
+    WORD_OK = False
 
-st.markdown("# Dati Monitoraggio - Visualizzazione e stampa")
-st.divider()
-
-# --- SIDEBAR (FILTRI TECNICI) ---
-with st.sidebar:
-    st.header("⚙️ Parametri Analisi")
-    sigma_val = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0, 0.1)
-    rimuovi_zeri = st.checkbox("Elimina valori '0'", value=True)
-    st.divider()
-    st.info("Regola qui i filtri statistici. La selezione dei sensori è nella pagina principale.")
-
-# --- FUNZIONI DI PULIZIA ---
 def pulisci_dati(serie, n_sigma, drop_zeros):
+    """Analisi di Gauss e rimozione zeri."""
     originale = serie.copy()
     diag = {"zeri": 0, "gauss": 0}
+    
     if drop_zeros:
         diag["zeri"] = int((originale == 0).sum())
         originale = originale.replace(0, np.nan)
+    
     validi = originale.dropna()
     if not validi.empty and n_sigma > 0:
         mean, std = validi.mean(), validi.std()
@@ -41,107 +29,139 @@ def pulisci_dati(serie, n_sigma, drop_zeros):
             outliers = (originale < lower) | (originale > upper)
             diag["gauss"] = int(outliers.sum())
             originale[outliers] = np.nan
+            
     return originale, diag
 
-# --- CARICAMENTO FILE (PAGINA PRINCIPALE) ---
-uploaded_file = st.file_uploader("📂 Carica il file Excel (deve contenere i fogli 'NAME' e i dati)", type=['xlsx', 'csv'])
+def run_plotter():
+    # --- HEADER ---
+    st.image("logo_dimos.jpg", width=400)
+    st.markdown("# Dati Monitoraggio - Visualizzazione e stampa")
+    st.divider()
 
-if uploaded_file:
-    try:
+    # --- SIDEBAR (PARAMETRI TECNICI) ---
+    with st.sidebar:
+        st.header("⚙️ Impostazioni Analisi")
+        sigma_val = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0, 0.1)
+        rimuovi_zeri = st.checkbox("Elimina letture a '0'", value=True)
+        st.divider()
+
+    # --- CARICAMENTO FILE (PAGINA PRINCIPALE) ---
+    uploaded_file = st.file_uploader("📂 Carica file Excel (NAME + Dati) o CSV", type=['xlsx', 'csv'])
+
+    if uploaded_file:
         gerarchia = {}
-        # Caso EXCEL con fogli multipli
-        if uploaded_file.name.endswith('.xlsx'):
-            xls = pd.ExcelFile(uploaded_file)
-            # Cerchiamo il foglio dei dati (es. 'flegrei')
-            sheet_dati = [s for s in xls.sheet_names if s != "NAME"][0]
-            df_dati = pd.read_excel(xls, sheet_name=sheet_dati)
-            
-            if "NAME" in xls.sheet_names:
-                df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
-                # Costruzione gerarchia sicura
-                for i, col_name in enumerate(df_dati.columns):
-                    if i == 0: continue
-                    try:
-                        # Usiamo .iloc con gestione errore per evitare KeyError: 0
-                        dl = str(df_name.iloc[0, i]).strip() if len(df_name) > 0 else "DL_Generico"
-                        sens = str(df_name.iloc[1, i]).strip() if len(df_name) > 1 else "Sensore"
-                    except:
-                        dl, sens = "Generale", "Vari"
-                    
+        df_dati = pd.DataFrame()
+
+        try:
+            if uploaded_file.name.endswith('.xlsx'):
+                xls = pd.ExcelFile(uploaded_file)
+                # Identifica foglio Dati (non NAME)
+                sheet_dati = [s for s in xls.sheet_names if s != "NAME"][0]
+                df_dati = pd.read_excel(xls, sheet_name=sheet_dati)
+                
+                if "NAME" in xls.sheet_names:
+                    df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
+                    # Riga 1 (0): Centralina | Riga 2 (1): Sensore | Riga 3 (2): Parametro
+                    for i, col_name in enumerate(df_dati.columns):
+                        if i == 0: continue # Salta data
+                        try:
+                            # Centralina (Riga 1)
+                            dl = str(df_name.iloc[0, i]).strip() if len(df_name) > 0 else "DL_Generico"
+                            # Sensore (Riga 2)
+                            sens = str(df_name.iloc[1, i]).strip() if len(df_name) > 1 else "Sensore"
+                        except:
+                            dl, sens = "Generale", "Vari"
+                        
+                        if dl not in gerarchia: gerarchia[dl] = {}
+                        if sens not in gerarchia[dl]: gerarchia[dl][sens] = []
+                        gerarchia[dl][sens].append(col_name)
+            else:
+                df_dati = pd.read_csv(uploaded_file, sep=None, engine='python')
+
+            # --- FALLBACK GERARCHIA (Parsing nomi se manca NAME) ---
+            if not gerarchia:
+                for col in df_dati.columns[1:]:
+                    parts = col.split(' ')
+                    dl = parts[0].split('_')[0] + "_" + parts[0].split('_')[1] if '_' in parts[0] else parts[0]
+                    sens = parts[0]
                     if dl not in gerarchia: gerarchia[dl] = {}
                     if sens not in gerarchia[dl]: gerarchia[dl][sens] = []
-                    gerarchia[dl][sens].append(col_name)
-        else:
-            # Caso CSV o Fallback
-            df_dati = pd.read_csv(uploaded_file, sep=None, engine='python')
+                    gerarchia[dl][sens].append(col)
 
-        # Fallback se la gerarchia è vuota (Parsing dal nome colonna)
-        if not gerarchia:
-            for col in df_dati.columns[1:]:
-                parts = col.split(' ')
-                dl = parts[0].split('_')[0] + "_" + parts[0].split('_')[1] if '_' in parts[0] else parts[0]
-                sens = parts[0]
-                if dl not in gerarchia: gerarchia[dl] = {}
-                if sens not in gerarchia[dl]: gerarchia[dl][sens] = []
-                gerarchia[dl][sens].append(col)
+            # --- GESTIONE TEMPO ---
+            col_t = df_dati.columns[0]
+            df_dati[col_t] = pd.to_datetime(df_dati[col_t], dayfirst=True, errors='coerce')
+            df_dati = df_dati.dropna(subset=[col_t]).sort_values(col_t)
 
-        # Gestione Tempo
-        col_t = df_dati.columns[0]
-        df_dati[col_t] = pd.to_datetime(df_dati[col_t], dayfirst=True, errors='coerce')
-        df_dati = df_dati.dropna(subset=[col_t]).sort_values(col_t)
+            # --- SELEZIONE UI ---
+            st.subheader("🔍 Selezione Centraline e Sensori")
+            c1, c2 = st.columns(2)
+            with c1:
+                sel_dl = st.multiselect("Seleziona Centraline", options=sorted(list(gerarchia.keys())))
+            with c2:
+                sens_opts = []
+                for d in sel_dl: sens_opts.extend(list(gerarchia[d].keys()))
+                sel_sens = st.multiselect("Seleziona Sensori", options=sorted(list(set(sens_opts))))
 
-        # --- SELEZIONE UI ---
-        st.subheader("🔍 Selezione Dati")
-        c1, c2 = st.columns(2)
-        with c1:
-            sel_dl = st.multiselect("Seleziona Centraline", options=sorted(list(gerarchia.keys())))
-        with c2:
-            sens_all = []
-            for d in sel_dl: sens_all.extend(list(gerarchia[d].keys()))
-            sel_sens = st.multiselect("Seleziona Sensori", options=sorted(list(set(sens_all))))
+            # --- FILTRO TEMPORALE DINAMICO ---
+            st.write("---")
+            min_d, max_d = df_dati[col_t].min(), df_dati[col_t].max()
+            t1, t2 = st.columns(2)
+            with t1: start_dt = st.date_input("Inizio Analisi", min_d)
+            with t2: end_dt = st.date_input("Fine Analisi", max_d)
 
-        # Filtro Date
-        st.write("---")
-        min_d, max_d = df_dati[col_t].min(), df_dati[col_t].max()
-        d_col1, d_col2 = st.columns(2)
-        with d_col1: start_dt = st.date_input("Inizio", min_d)
-        with d_col2: end_dt = st.date_input("Fine", max_d)
+            # --- ELABORAZIONE GRAFICO ---
+            final_cols = []
+            for d in sel_dl:
+                for s in sel_sens:
+                    if s in gerarchia[d]: final_cols.extend(gerarchia[d][s])
 
-        # --- GRAFICO ---
-        cols_to_plot = []
-        for d in sel_dl:
-            for s in sel_sens:
-                if s in gerarchia[d]: cols_to_plot.extend(gerarchia[d][s])
+            if final_cols:
+                mask = (df_dati[col_t].dt.date >= start_dt) & (df_dati[col_t].dt.date <= end_dt)
+                df_p = df_dati.loc[mask]
+                
+                fig = go.Figure()
+                report_stats = []
 
-        if cols_to_plot:
-            mask = (df_dati[col_t].dt.date >= start_dt) & (df_dati[col_t].dt.date <= end_dt)
-            df_p = df_dati.loc[mask]
-            
-            fig = go.Figure()
-            stats_list = []
+                for col in final_cols:
+                    y_clean, diag = pulisci_dati(df_p[col], sigma_val, rimuovi_zeri)
+                    diag["Parametro"] = col
+                    report_stats.append(diag)
+                    fig.add_trace(go.Scatter(x=df_p[col_t], y=y_clean, name=col))
 
-            for c in cols_to_plot:
-                y_pulita, diag = pulisci_dati(df_p[c], sigma_val, rimuovi_zeri)
-                diag["Parametro"] = c
-                stats_list.append(diag)
-                fig.add_trace(go.Scatter(x=df_p[col_t], y=y_pulita, name=c))
+                # Grafico con range slider dinamico
+                fig.update_layout(
+                    height=600, template="plotly_white",
+                    xaxis=dict(rangeslider=dict(visible=True), type="date"),
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
-            fig.update_layout(height=600, xaxis=dict(rangeslider=dict(visible=True)))
-            st.plotly_chart(fig, use_container_width=True)
+                # Report Qualità
+                st.subheader("📊 Report Analisi (Zeri e Gauss)")
+                st.table(pd.DataFrame(report_stats).set_index("Parametro"))
 
-            # Report Gauss/Zeri
-            st.subheader("📊 Report Analisi (Zeri e Gauss)")
-            st.table(pd.DataFrame(stats_list).set_index("Parametro"))
+                # Export TXT Ascisse
+                txt_data = df_p[col_t].dt.strftime('%d/%m/%Y %H:%M:%S').to_string(index=False)
+                st.download_button("💾 Scarica Ascisse (TXT)", txt_data, "ascisse.txt")
 
-            # Download Ascisse
-            txt = df_p[col_t].dt.strftime('%d/%m/%Y %H:%M:%S').to_string(index=False)
-            st.download_button("💾 Scarica Ascisse (TXT)", txt, "ascisse.txt")
-            
-        else:
-            st.info("Seleziona una centralina e un sensore per visualizzare i dati.")
+                # Export Word
+                if st.button("📄 Esporta in Word") and WORD_OK:
+                    doc = Document()
+                    doc.add_heading('Report Monitoraggio DIMOS', 0)
+                    doc.add_paragraph(f"Periodo: {start_dt} - {end_dt}")
+                    table = doc.add_table(rows=1, cols=3)
+                    for i, h in enumerate(['Parametro', 'Zeri', 'Gauss']): table.rows[0].cells[i].text = h
+                    for r in report_stats:
+                        row = table.add_row().cells
+                        row[0].text, row[1].text, row[2].text = str(r['Parametro']), str(r['zeri']), str(r['gauss'])
+                    buf = BytesIO()
+                    doc.save(buf)
+                    st.download_button("Scarica Report .docx", buf.getvalue(), "Report.docx")
 
-    except Exception as e:
-        st.error(f"Errore durante l'elaborazione: {e}. Controlla che il foglio 'NAME' sia compilato correttamente.")
+        except Exception as e:
+            st.error(f"Errore nei dati: {e}")
 
-else:
-    st.warning("Carica un file per iniziare.")
+# Questa funzione permette ad app_DIMOS.py di chiamare il plotter
+if __name__ == "__main__":
+    run_plotter()
