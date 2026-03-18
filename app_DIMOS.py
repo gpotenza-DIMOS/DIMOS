@@ -1,114 +1,103 @@
 import streamlit as st
 import os
 
-# CONFIGURAZIONE PAGINA
-st.set_page_config(page_title="DIMOS - Monitoring System", layout="wide")
+# Configurazione Pagina
+st.set_page_config(page_title="DIMOS - Sistema Integrato", layout="wide")
 
-# --- CSS PERSONALIZZATO PER RICALCARE IL TUO PRINT SCREEN ---
+# --- CSS CUSTOM PER SIDEBAR E BOTTONI ---
 st.markdown("""
     <style>
-        /* Sfondo sidebar scuro come da immagine */
+        /* Sfondo Sidebar scuro */
         [data-testid="stSidebar"] {
-            background-color: #262730;
-            color: white;
+            background-color: #1E1E1E;
         }
-        /* Stile pulsanti nella sidebar */
-        .stButton>button {
+        /* Stile pulsanti Sidebar */
+        .stButton > button {
             width: 100%;
-            border-radius: 5px;
+            border-radius: 0px;
             height: 3em;
-            background-color: #3e404a;
+            background-color: #333333;
             color: white;
-            border: 1px solid #555;
-            transition: 0.3s;
+            border: none;
             text-align: left;
-            padding-left: 20px;
+            padding-left: 15px;
+            margin-bottom: -10px;
         }
-        .stButton>button:hover {
-            background-color: #50525d;
-            border-color: #ff4b4b;
+        .stButton > button:hover {
+            background-color: #444444;
+            border-left: 5px solid #ff4b4b;
             color: white;
         }
-        /* Rimuovi padding in eccesso sopra il logo */
-        .block-container {
-            padding-top: 2rem;
-        }
+        /* Nasconde i margini standard */
+        .block-container { padding-top: 1rem; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- SISTEMA DI AUTENTICAZIONE ---
+# --- LOGIN ---
 def check_password():
     if "auth" not in st.session_state:
         st.session_state["auth"] = False
-    
-    if st.session_state["auth"]:
-        return True
+    if st.session_state["auth"]: return True
 
-    # Schermata Login Centralizzata
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
         if os.path.exists("logo_dimos.jpg"):
             st.image("logo_dimos.jpg", use_container_width=True)
-        st.markdown("<h3 style='text-align: center;'>Identificazione Utente</h3>", unsafe_allow_html=True)
-        user = st.text_input("ID")
-        pw = st.text_input("Password", type="password")
+        st.subheader("Login Accesso")
+        u = st.text_input("ID")
+        p = st.text_input("Password", type="password")
         if st.button("ACCEDI"):
-            if user == "asdf" and pw == "asdf":
+            if u == "asdf" and p == "asdf":
                 st.session_state["auth"] = True
                 st.rerun()
-            else:
-                st.error("Credenziali Errate")
+            else: st.error("Accesso negato")
     return False
 
 if check_password():
-    # --- SIDEBAR CON PULSANTI COME DA IMMAGINE ---
+    # --- SIDEBAR STRUTTURATA ---
     with st.sidebar:
+        # Logo in alto
         if os.path.exists("logo_DIMOScircle.jpg"):
-            st.image("logo_DIMOScircle.jpg", width=80)
+            st.image("logo_DIMOScircle.jpg", width=100)
         
-        st.markdown("### STRUMENTI")
+        st.markdown("<h2 style='color:white;'>STRUMENTI</h2>", unsafe_allow_html=True)
         
-        if st.button("🏠 Home Dashboard"):
-            st.session_state["page"] = "home"
+        # Pulsanti di navigazione
+        if st.button("🏠 Home Dashboard"): st.session_state["pg"] = "home"
+        if st.button("📏 Elettrolivelle"): st.session_state["pg"] = "el"
+        if st.button("📈 Grafici Monitoraggio"): st.session_state["pg"] = "pl"
         
-        if st.button("📏 Elettrolivelle"):
-            st.session_state["page"] = "elettrolivelle"
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        
+        # Logo Microgeo in basso nella sidebar
+        if os.path.exists("logo_microgeo.jpg"):
+            st.image("logo_microgeo.jpg", use_container_width=True)
             
-        if st.button("📈 Grafici Monitoraggio"):
-            st.session_state["page"] = "grafici"
-        
-        st.divider()
         if st.button("🚪 Esci"):
             st.session_state["auth"] = False
             st.rerun()
 
-    # --- LOGICA DI NAVIGAZIONE ---
-    attuale = st.session_state.get("page", "home")
+    # --- CONTENUTO ---
+    pagina = st.session_state.get("pg", "home")
 
-    if attuale == "home":
-        st.title("Piattaforma Integrata DIMOS")
-        col_a, col_b = st.columns(2)
-        
-        with col_a:
-            st.info("### Analisi Elettrolivelle")
-            if os.path.exists("montita.jpg"):
-                st.image("montita.jpg", use_container_width=True)
-            if st.button("AVVIA MODULO LIVELLOMETRICO"):
-                st.session_state["page"] = "elettrolivelle"
+    if pagina == "home":
+        st.title("Piattaforma DIMOS")
+        c1, c2 = st.columns(2)
+        with c1:
+            if os.path.exists("montita.jpg"): st.image("montita.jpg", use_container_width=True)
+            if st.button("APRI ELETTROLIVELLE", key="btn_el"):
+                st.session_state["pg"] = "el"
+                st.rerun()
+        with c2:
+            if os.path.exists("image_6e3d1e.jpg"): st.image("image_6e3d1e.jpg", use_container_width=True)
+            if st.button("APRI GRAFICI", key="btn_pl"):
+                st.session_state["pg"] = "pl"
                 st.rerun()
 
-        with col_b:
-            st.info("### Analisi Grafica / Stampe")
-            if os.path.exists("image_6e3d1e.jpg"):
-                st.image("image_6e3d1e.jpg", use_container_width=True)
-            if st.button("AVVIA MODULO GRAFICI"):
-                st.session_state["page"] = "grafici"
-                st.rerun()
-
-    elif attuale == "elettrolivelle":
+    elif pagina == "el":
         from elettrolivelle_mod import run_elettrolivelle
         run_elettrolivelle()
 
-    elif attuale == "grafici":
+    elif pagina == "pl":
         from plotter_mod import run_plotter
         run_plotter()
