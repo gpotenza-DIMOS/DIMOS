@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import re
 
+# --- LOGICA DI FILTRAGGIO ---
 def applica_filtri_completi(serie, n_sigma, rimuovi_zeri):
     originale = serie.copy()
     diag = {"zeri": 0, "gauss": 0}
@@ -19,116 +21,130 @@ def applica_filtri_completi(serie, n_sigma, rimuovi_zeri):
             originale[outliers] = np.nan
     return originale, diag
 
-def main():
-    st.set_page_config(page_title="DIMOS Plotter", layout="wide")
-    st.title("📈 Analisi Monitoraggio Strutturale")
+# --- PARSING GERARCHIA ---
+def costruisci_gerarchia(df_data, xls_obj):
+    gerarchia = {}
+    
+    # Caso A: Esiste il foglio NAME
+    if "NAME" in xls_obj.sheet_names:
+        df_name = pd.read_excel(xls_obj, sheet_name="NAME", header=None)
+        for col_idx in range(df_name.shape[1]):
+            try:
+                dl = str(df_name.iloc[0, col_idx]).strip()
+                sensore = str(df_name.iloc[1, col_idx]).strip()
+                grandezza = str(df_name.iloc[2, col_idx]).strip()
+                
+                if dl.lower() in ["nan", "datalogger"] or grandezza not in df_data.columns:
+                    continue
+                
+                if dl not in gerarchia: gerarchia[dl] = {}
+                if sensore not in gerarchia[dl]: gerarchia[dl][sensore] = []
+                gerarchia[dl][sensore].append(grandezza)
+            except: continue
+            
+    # Caso B: Parsing dal nome colonna (Fallback)
+    else:
+        for col in df_data.columns[1:]: # Salta la colonna tempo
+            parts = col.split(" ")
+            if len(parts) >= 2:
+                # Es: CO_9277 CL_01_X [°] -> DL: CO_9277, Sensore: CL_01
+                dl = parts[0]
+                # Cerchiamo di capire se c'è un sotto-id sensore (es. CL_01)
+                sub_parts = parts[1].split("_")
+                sensore = f"{parts[0]}_{sub_parts[0]}_{sub_parts[1]}" if len(sub_parts) >= 2 else parts[0]
+                
+                if dl not in gerarchia: gerarchia[dl] = {}
+                if sensore not in gerarchia[dl]: gerarchia[dl][sensore] = []
+                gerarchia[dl][sensore].append(col)
+            else:
+                dl = "Generali"
+                if dl not in gerarchia: gerarchia[dl] = {"Sensori": []}
+                gerarchia[dl]["Sensori"].append(col)
+                
+    return gerarchia
 
-    uploaded_file = st.file_uploader("Carica il file Excel", type=["xlsx"])
+def main():
+    st.set_page_config(page_title="DIMOS Structural Plotter", layout="wide")
+    st.title("🏗️ DIMOS - Monitoraggio Strutturale")
+
+    uploaded_file = st.file_uploader("1. Carica il file Excel (.xlsx)", type=["xlsx"])
 
     if uploaded_file:
-        try:
-            xls = pd.ExcelFile(uploaded_file)
-            # Carichiamo il foglio dati (assumiamo sia il primo)
-            df_data = pd.read_excel(xls, sheet_name=0)
+        xls = pd.ExcelFile(uploaded_file)
+        # Carica il primo foglio come dati
+        df_data = pd.read_excel(xls, sheet_name=0)
+        col_tempo = df_data.columns[0]
+        df_data[col_tempo] = pd.to_datetime(df_data[col_tempo], errors='coerce')
+        
+        # Costruzione gerarchia DL -> Sensore -> Grandezze
+        gerarchia = costruisci_gerarchia(df_data, xls)
+
+        # --- SEZIONE SELEZIONE (Pagina Principale) ---
+        st.subheader("2. Selezione Dati")
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            lista_dl = sorted(list(gerarchia.keys()))
+            sel_dls = st.multiselect("Seleziona Centraline (Datalogger)", lista_dl)
             
-            if "NAME" in xls.sheet_names:
-                # Carichiamo NAME senza header per gestire noi le righe 1, 2, 3
-                df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
+        colonne_da_plottare = []
+        if sel_dls:
+            with c2:
+                # Uniamo i sensori di tutte le centraline selezionate
+                sensori_disponibili = {}
+                for dl in sel_dls:
+                    for s, cols in gerarchia[dl].items():
+                        sensori_disponibili[f"{dl} > {s}"] = cols
                 
-                # --- PULIZIA E COSTRUZIONE DIZIONARIO UNICO ---
-                # Struttura: { 'Datalogger': { 'Sensore': [Lista Grandezze Web] } }
-                gerarchia = {}
+                sel_sens = st.multiselect("Seleziona Sensori", list(sensori_disponibili.keys()))
+                for s in sel_sens:
+                    colonne_da_plottare.extend(sensori_disponibili[s])
+
+        # --- FILTRI ---
+        st.divider()
+        with st.expander("🛠️ Impostazioni Analisi e Filtri", expanded=True):
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                rimuovi_zeri = st.checkbox("Elimina letture a '0'", value=True)
+                sigma = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0)
+            with f2:
+                modo_x = st.radio("Asse X", ["Temporale", "Equidistante (Indici)"])
+            with f3:
+                st.write("Esportazioni")
+                if st.button("Esporta Ascisse (.txt)"):
+                    txt_data = df_data[col_tempo].dt.strftime('%d/%m/%Y %H:%M:%S').to_string(index=False)
+                    st.download_button("Scarica TXT", txt_data, "ascisse_monitoraggio.txt")
+
+        # --- GRAFICO ---
+        if colonne_da_plottare:
+            fig = go.Figure()
+            stats = []
+
+            for col in colonne_da_plottare:
+                y_filtrata, info = applica_filtri_completi(df_data[col], sigma, rimuovi_zeri)
+                stats.append({"Colonna": col, "Zeri rimossi": info["zeri"], "Outliers (Gauss)": info["gauss"]})
                 
-                # Iteriamo sulle colonne del foglio NAME
-                # Partiamo dalla colonna che non è "datalogger" (solitamente la colonna A è l'indice)
-                for col_idx in range(df_name.shape[1]):
-                    # Leggiamo i valori delle 3 righe
-                    r1_dl = str(df_name.iloc[0, col_idx]).strip()
-                    r2_sens = str(df_name.iloc[1, col_idx]).strip()
-                    r3_web = str(df_name.iloc[2, col_idx]).strip()
-                    
-                    # Saltiamo le intestazioni o celle vuote
-                    if r1_dl.lower() in ["datalogger", "nan"] or r3_web.lower() == "nan":
-                        continue
-                    
-                    if r1_dl not in gerarchia:
-                        gerarchia[r1_dl] = {}
-                    if r2_sens not in gerarchia[r1_dl]:
-                        gerarchia[r1_dl][r2_sens] = []
-                    
-                    # Aggiungiamo il "nome web" (riga 3) alla lista del sensore
-                    if r3_web in df_data.columns:
-                        gerarchia[r1_dl][r2_sens].append(r3_web)
-
-                # --- INTERFACCIA DI SELEZIONE ---
-                st.sidebar.header("🕹️ Pannello di Controllo")
+                x_vals = df_data[col_tempo] if modo_x == "Temporale" else df_data.index
                 
-                # 1. Selezione Datalogger (Univoci)
-                lista_dl = sorted(list(gerarchia.keys()))
-                sel_dl = st.sidebar.multiselect("Seleziona Centraline", lista_dl)
-                
-                colonne_finali = []
-                
-                if sel_dl:
-                    for dl in sel_dl:
-                        st.sidebar.markdown(f"**--- {dl} ---**")
-                        # 2. Selezione Sensori (Univoci per quel DL)
-                        lista_sens = sorted(list(gerarchia[dl].keys()))
-                        sel_sens = st.sidebar.multiselect(f"Sensori in {dl}", lista_sens, key=f"sel_{dl}")
-                        
-                        for s in sel_sens:
-                            # 3. Raccogliamo tutte le grandezze fisiche del sensore scelto
-                            colonne_finali.extend(gerarchia[dl][s])
+                fig.add_trace(go.Scatter(
+                    x=x_vals, y=y_filtrata, name=col,
+                    mode='lines+markers', marker=dict(size=4),
+                    connectgaps=False
+                ))
 
-                # --- FILTRI E OPZIONI ---
-                st.sidebar.divider()
-                rimuovi_zeri = st.sidebar.checkbox("Elimina letture a Zero", value=True)
-                sigma = st.sidebar.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0)
-                
-                # Gestione asse X
-                col_tempo = df_data.columns[0] # La prima colonna del primo foglio
-                df_data[col_tempo] = pd.to_datetime(df_data[col_tempo], errors='coerce')
-                modo_x = st.sidebar.radio("Modalità Asse X", ["Data Ora", "Equidistante (Testo)"])
-
-                # --- GENERAZIONE GRAFICO ---
-                if colonne_finali:
-                    fig = go.Figure()
-                    
-                    for col in colonne_finali:
-                        # Applicazione Gauss e Zeri
-                        y_vals, info = applica_filtri_completi(df_data[col], sigma, rimuovi_zeri)
-                        
-                        x_vals = df_data[col_tempo]
-                        if modo_x == "Equidistante (Testo)":
-                            x_vals = df_data[col_tempo].dt.strftime('%d/%m/%y %H:%M')
-
-                        fig.add_trace(go.Scatter(
-                            x=x_vals,
-                            y=y_vals,
-                            name=col,
-                            mode='lines+markers',
-                            connectgaps=False # Non unisce i punti eliminati dai filtri
-                        ))
-
-                    fig.update_layout(
-                        template="plotly_white",
-                        hovermode="x unified",
-                        xaxis_title="Asse Temporale",
-                        yaxis_title="Valore Misurato",
-                        legend=dict(orientation="h", y=-0.2)
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Anteprima dati filtrati
-                    with st.expander("🔍 Tabella Dati Selezionati (Primi 100)"):
-                        st.dataframe(df_data[[col_tempo] + colonne_finali].head(100))
-                else:
-                    st.warning("Seleziona almeno un datalogger e un sensore per visualizzare i dati.")
-
-        except Exception as e:
-            st.error(f"Si è verificato un errore nel parsing: {e}")
-            st.info("Assicurati che il foglio 'NAME' abbia: Riga 1 (DL), Riga 2 (Sensore), Riga 3 (Nome Web).")
+            fig.update_layout(
+                height=650,
+                template="plotly_white",
+                hovermode="x unified",
+                legend=dict(orientation="h", y=-0.15)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Tabella Diagnostica
+            st.write("### 📊 Diagnostica Filtri")
+            st.table(pd.DataFrame(stats))
+        else:
+            st.info("Inizia selezionando una centralina per visualizzare i sensori collegati.")
 
 if __name__ == "__main__":
     main()
