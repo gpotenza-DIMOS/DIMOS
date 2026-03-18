@@ -2,102 +2,144 @@ import streamlit as st
 import os
 
 # Configurazione Pagina
-st.set_page_config(page_title="DIMOS - Sistema Integrato", layout="wide")
+st.set_page_config(page_title="DIMOS - Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# --- CSS CUSTOM PER SIDEBAR E BOTTONI ---
+# --- CSS AVANZATO PER LOOK "SOFTWARE MODERNO" ---
 st.markdown("""
     <style>
-        /* Sfondo Sidebar scuro */
+        /* Sfondo e Sidebar */
         [data-testid="stSidebar"] {
-            background-color: #1E1E1E;
+            background-color: #1a1c23;
+            border-right: 1px solid #333;
+            min-width: 300px !important;
         }
-        /* Stile pulsanti Sidebar */
-        .stButton > button {
+        
+        /* Contenitore Logo in basso alla sidebar */
+        .sidebar-footer {
+            position: fixed;
+            bottom: 20px;
+            width: 260px;
+            text-align: center;
+        }
+
+        /* STILE BOTTONI MODERNI (Effetto Neumorfico/Industrial) */
+        div.stButton > button {
             width: 100%;
-            border-radius: 0px;
-            height: 3em;
-            background-color: #333333;
-            color: white;
-            border: none;
+            background-color: #2d303d;
+            color: #d1d1d1;
+            border: 1px solid #3d4150;
+            padding: 15px 20px;
             text-align: left;
-            padding-left: 15px;
-            margin-bottom: -10px;
+            font-weight: 500;
+            border-radius: 8px;
+            transition: all 0.2s ease-in-out;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.3);
+            margin-bottom: 10px;
         }
-        .stButton > button:hover {
-            background-color: #444444;
-            border-left: 5px solid #ff4b4b;
-            color: white;
+
+        /* Animazione al passaggio del mouse (Hover) */
+        div.stButton > button:hover {
+            background-color: #3d4150;
+            color: #ffffff;
+            border-color: #ff4b4b;
+            transform: translateY(-2px);
+            box-shadow: 4px 4px 10px rgba(0,0,0,0.5);
         }
-        /* Nasconde i margini standard */
-        .block-container { padding-top: 1rem; }
+
+        /* Effetto pressione (Click) */
+        div.stButton > button:active {
+            transform: translateY(1px);
+            box-shadow: inset 2px 2px 5px rgba(0,0,0,0.5);
+            background-color: #1a1c23;
+        }
+
+        /* Nascondi header standard Streamlit */
+        header {visibility: hidden;}
+        .block-container {padding-top: 1rem;}
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOGIN ---
-def check_password():
-    if "auth" not in st.session_state:
-        st.session_state["auth"] = False
-    if st.session_state["auth"]: return True
+# --- FUNZIONE LOGGING ---
+def login():
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
 
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col2:
-        if os.path.exists("logo_dimos.jpg"):
-            st.image("logo_dimos.jpg", use_container_width=True)
-        st.subheader("Login Accesso")
-        u = st.text_input("ID")
-        p = st.text_input("Password", type="password")
-        if st.button("ACCEDI"):
-            if u == "asdf" and p == "asdf":
-                st.session_state["auth"] = True
-                st.rerun()
-            else: st.error("Accesso negato")
-    return False
-
-if check_password():
-    # --- SIDEBAR STRUTTURATA ---
-    with st.sidebar:
-        # Logo in alto
-        if os.path.exists("logo_DIMOScircle.jpg"):
-            st.image("logo_DIMOScircle.jpg", width=100)
-        
-        st.markdown("<h2 style='color:white;'>STRUMENTI</h2>", unsafe_allow_html=True)
-        
-        # Pulsanti di navigazione
-        if st.button("🏠 Home Dashboard"): st.session_state["pg"] = "home"
-        if st.button("📏 Elettrolivelle"): st.session_state["pg"] = "el"
-        if st.button("📈 Grafici Monitoraggio"): st.session_state["pg"] = "pl"
-        
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        
-        # Logo Microgeo in basso nella sidebar
-        if os.path.exists("logo_microgeo.jpg"):
-            st.image("logo_microgeo.jpg", use_container_width=True)
+    if not st.session_state["authenticated"]:
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            st.markdown("<br><br>", unsafe_allow_html=True)
+            if os.path.exists("logo_dimos.jpg"):
+                st.image("logo_dimos.jpg", use_container_width=True)
             
-        if st.button("🚪 Esci"):
-            st.session_state["auth"] = False
+            with st.container(border=True):
+                st.subheader("Login di Sistema")
+                uid = st.text_input("ID")
+                psw = st.text_input("Password", type="password")
+                if st.button("ACCEDI"):
+                    if uid == "asdf" and psw == "asdf":
+                        st.session_state["authenticated"] = True
+                        st.rerun()
+                    else:
+                        st.error("Credenziali non corrette")
+        return False
+    return True
+
+# --- APPLICAZIONE PRINCIPALE ---
+if login():
+    # SIDEBAR
+    with st.sidebar:
+        # Logo Circle in Alto
+        if os.path.exists("logo_DIMOScircle.jpg"):
+            st.image("logo_DIMOScircle.jpg", width=120)
+        
+        st.markdown("<h3 style='color:white; margin-bottom:20px;'>NAVIGAZIONE</h3>", unsafe_allow_html=True)
+        
+        # Pulsanti con gestione stato
+        if st.button("🏠 DASHBOARD"):
+            st.session_state["menu"] = "home"
+        if st.button("📏 ELETTROLIVELLE"):
+            st.session_state["menu"] = "livelle"
+        if st.button("📈 GRAFICI & STAMPE"):
+            st.session_state["menu"] = "grafici"
+        
+        # Logo Microgeo fisso in basso
+        st.markdown('<div class="sidebar-footer">', unsafe_allow_html=True)
+        if os.path.exists("logo_microgeo.jpg"):
+            st.image("logo_microgeo.jpg", width=200)
+        if st.button("🚪 LOGOUT"):
+            st.session_state["authenticated"] = False
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- CONTENUTO ---
-    pagina = st.session_state.get("pg", "home")
+    # LOGICA PAGINE
+    pagine = st.session_state.get("menu", "home")
 
-    if pagina == "home":
-        st.title("Piattaforma DIMOS")
+    if pagine == "home":
+        st.title("Sistema Integrato DIMOS")
+        st.markdown("---")
+        
         c1, c2 = st.columns(2)
         with c1:
-            if os.path.exists("montita.jpg"): st.image("montita.jpg", use_container_width=True)
-            if st.button("APRI ELETTROLIVELLE", key="btn_el"):
-                st.session_state["pg"] = "el"
-                st.rerun()
-        with c2:
-            if os.path.exists("image_6e3d1e.jpg"): st.image("image_6e3d1e.jpg", use_container_width=True)
-            if st.button("APRI GRAFICI", key="btn_pl"):
-                st.session_state["pg"] = "pl"
+            st.markdown("### Analisi Livellometrica")
+            if os.path.exists("montita.jpg"):
+                st.image("montita.jpg", use_container_width=True)
+            if st.button("LANCIA MODULO LIVELLOMETRICO"):
+                st.session_state["menu"] = "livelle"
                 st.rerun()
 
-    elif pagina == "el":
+        with c2:
+            st.markdown("### Monitoraggio & Report")
+            # Uso l'immagine del grafico caricata (image_6e2623.jpg)
+            if os.path.exists("image_6e2623.jpg"):
+                st.image("image_6e2623.jpg", use_container_width=True)
+            if st.button("LANCIA MODULO GRAFICI"):
+                st.session_state["menu"] = "grafici"
+                st.rerun()
+
+    elif pagine == "livelle":
         from elettrolivelle_mod import run_elettrolivelle
         run_elettrolivelle()
 
-    elif pagina == "pl":
+    elif pagine == "grafici":
         from plotter_mod import run_plotter
         run_plotter()
