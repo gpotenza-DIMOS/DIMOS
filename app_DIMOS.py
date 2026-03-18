@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 
-# 1. Configurazione (Deve essere la prima riga)
+# 1. Configurazione 
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
 # 2. CSS per eliminare i margini e pulire il layout
@@ -90,10 +90,10 @@ if pg == "home":
     col_img1, col_img2 = st.columns([1, 4])
     with col_img1:
         if os.path.exists("logo_DIMOScircle.jpg"):
-            st.image("logo_DIMOScircle.jpg", width=120)
+            st.image("logo_DIMOScircle.jpg", width=250)
     with col_img2:
         if os.path.exists("montita.jpg"):
-            st.image("montita.jpg", width=500)
+            st.image("montita.jpg", width=400)
     
     st.markdown("<br>", unsafe_allow_html=True)
 
