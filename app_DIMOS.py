@@ -1,82 +1,61 @@
 import streamlit as st
 import os
-import plotter_mod  # Importiamo il tuo modulo plotter
+from elettrolivelle_mod import run_elettrolivelle
+from plotter_mod import run_plotter
 
-# --- CONFIGURAZIONE PAGINA (UNICA CHIAMATA CONSENTITA) ---
-st.set_page_config(
-    page_title="DIMOS - Monitoraggio Strutturale", 
-    layout="wide", 
-    page_icon="📊"
-)
+# --- CONFIGURAZIONE PAGINA ---
+st.set_page_config(page_title="DIMOS - Sistema Integrato", layout="wide")
+
+def get_asset_path(filename):
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
 
 # --- SISTEMA DI AUTENTICAZIONE ---
 def check_password():
-    """Ritorna True se la password è corretta."""
     if "auth" not in st.session_state:
         st.session_state["auth"] = False
-    
     if st.session_state["auth"]:
         return True
-
-    # Interfaccia di Login
-    st.markdown("<br><br>", unsafe_allow_html=True)
+    
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        if os.path.exists("logo_dimos.jpg"):
-            st.image("logo_dimos.jpg", width=400)
-        
-        st.title("Accesso Piattaforma DIMOS")
-        user = st.text_input("Username")
+        p_logo = get_asset_path("logo_dimos.jpg")
+        if os.path.exists(p_logo):
+            st.image(p_logo, use_container_width=True)
+        st.markdown("<h2 style='text-align: center;'>Accesso DIMOS</h2>", unsafe_allow_html=True)
+        user_id = st.text_input("ID Utente")
         password = st.text_input("Password", type="password")
-        
-        if st.button("Accedi"):
-            # Modifica qui le tue credenziali
-            if user == "admin" and password == "dimos2024":
+        if st.button("Entra"):
+            if user_id == "dimos" and password == "micai!":
                 st.session_state["auth"] = True
                 st.rerun()
             else:
-                st.error("Credenziali non valide")
+                st.error("Credenziali errate")
     return False
 
-# --- LOGICA PRINCIPALE ---
 if check_password():
-    # BARRA LATERALE DI NAVIGAZIONE
+    # Sidebar comune
     with st.sidebar:
-        if os.path.exists("logo_dimos.jpg"):
-            st.image("logo_dimos.jpg", width=200)
-        st.title("Menu Principale")
-        scelta = st.radio(
-            "Seleziona Funzionalità:",
-            ["🏠 Home Page", "📊 Visual & Plotter", "📂 Gestione Archivi"]
-        )
+        p_side = get_asset_path("logo_microgeo.jpg")
+        if os.path.exists(p_side):
+            st.image(p_side, use_container_width=True)
+        
         st.divider()
-        if st.button("Logout"):
+        scelta = st.radio("Seleziona Strumento:", 
+                         ["🏠 Home", "📏 Elettrolivelle", "📈 Monitoraggio - Stampe"])
+        
+        st.divider()
+        if st.button("Esci"):
             st.session_state["auth"] = False
             st.rerun()
 
-    # --- ROUTING DELLE PAGINE ---
-    if scelta == "🏠 Home Page":
+    # Navigazione
+    if scelta == "🏠 Home":
         st.title("Benvenuto nel Sistema DIMOS")
-        st.write("Seleziona **Visual & Plotter** dal menu a sinistra per caricare i dati e iniziare l'analisi strutturale.")
+        st.image(get_asset_path("logo_dimos.jpg"), width=500)
+        st.info("Seleziona uno strumento dalla barra laterale per iniziare.")
         
-        # Spiegazione Filtri
-        with st.expander("Informazioni sull'Analisi di Gauss"):
-            st.write("""
-            Il sistema applica automaticamente un filtro basato sulla distribuzione normale (Gaussiana). 
-            I dati che si discostano eccessivamente dalla media (outliers) vengono identificati e rimossi 
-            per garantire una lettura pulita dei grafici.
-            """)
-            
-
-[Image of normal distribution curve with standard deviation intervals]
-
-
-    elif scelta == "📊 Visual & Plotter":
-        # CHIAMATA AL MODULO ESTERNO
-        # Assicurati che plotter_mod.py abbia la funzione run_plotter() 
-        # e che NON contenga st.set_page_config
-        plotter_mod.run_plotter()
-
-    elif scelta == "📂 Gestione Archivi":
-        st.subheader("Archivio Storico")
-        st.info("Funzionalità in fase di implementazione.")
+    elif scelta == "📏 Elettrolivelle":
+        run_elettrolivelle()
+        
+    elif scelta == "📈 Monitoraggio - Stampe":
+        run_plotter()
