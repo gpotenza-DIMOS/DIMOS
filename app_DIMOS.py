@@ -38,7 +38,7 @@ def check_password():
         user_id = st.text_input("ID Utente")
         password = st.text_input("Password", type="password")
         if st.button("Entra"):
-            if user_id == "dimos" and password == "micai!":
+            if user_id == "asdf" and password == "asdf":
                 st.session_state["auth"] = True
                 st.rerun()
             else:
