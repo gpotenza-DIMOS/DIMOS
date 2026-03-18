@@ -1,61 +1,52 @@
 import streamlit as st
-import os
-from elettrolivelle_mod import run_elettrolivelle
-from plotter_mod import run_plotter
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime
+from io import BytesIO
+from docx import Document
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="DIMOS - Sistema Integrato", layout="wide")
+def pulisci_dati(serie, n_sigma, drop_zeros):
+    originale = serie.copy()
+    diag = {"zeri": 0, "gauss": 0}
+    if drop_zeros:
+        diag["zeri"] = int((originale == 0).sum())
+        originale = originale.replace(0, np.nan)
+    validi = originale.dropna()
+    if not validi.empty and n_sigma > 0:
+        m, s = validi.mean(), validi.std()
+        mask = (originale < m - n_sigma*s) | (originale > m + n_sigma*s)
+        diag["gauss"] = int(mask.sum())
+        originale[mask] = np.nan
+    return originale, diag
 
-def get_asset_path(filename):
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
-
-# --- SISTEMA DI AUTENTICAZIONE ---
-def check_password():
-    if "auth" not in st.session_state:
-        st.session_state["auth"] = False
-    if st.session_state["auth"]:
-        return True
+def run_plotter():
+    st.title("📈 Monitoraggio - Visualizzazione e Stampe")
     
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        p_logo = get_asset_path("logo_dimos.jpg")
-        if os.path.exists(p_logo):
-            st.image(p_logo, use_container_width=True)
-        st.markdown("<h2 style='text-align: center;'>Accesso DIMOS</h2>", unsafe_allow_html=True)
-        user_id = st.text_input("ID Utente")
-        password = st.text_input("Password", type="password")
-        if st.button("Entra"):
-            if user_id == "dimos" and password == "micai!":
-                st.session_state["auth"] = True
-                st.rerun()
-            else:
-                st.error("Credenziali errate")
-    return False
+    # Parametri in colonna laterale o in alto
+    with st.expander("⚙️ Impostazioni Analisi Statistici", expanded=False):
+        c1, c2 = st.columns(2)
+        sigma_val = c1.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0, 0.1)
+        rimuovi_zeri = c2.checkbox("Elimina valori '0'", value=True)
 
-if check_password():
-    # Sidebar comune
-    with st.sidebar:
-        p_side = get_asset_path("logo_microgeo.jpg")
-        if os.path.exists(p_side):
-            st.image(p_side, use_container_width=True)
-        
-        st.divider()
-        scelta = st.radio("Seleziona Strumento:", 
-                         ["🏠 Home", "📏 Elettrolivelle", "📈 Monitoraggio - Stampe"])
-        
-        st.divider()
-        if st.button("Esci"):
-            st.session_state["auth"] = False
-            st.rerun()
+    uploaded_file = st.file_uploader("Carica Excel Monitoraggio", type=["xlsx"])
 
-    # Navigazione
-    if scelta == "🏠 Home":
-        st.title("Benvenuto nel Sistema DIMOS")
-        st.image(get_asset_path("logo_dimos.jpg"), width=500)
-        st.info("Seleziona uno strumento dalla barra laterale per iniziare.")
+    if uploaded_file:
+        df_dati = pd.read_excel(uploaded_file)
+        col_t = df_dati.columns[0]
+        df_dati[col_t] = pd.to_datetime(df_dati[col_t])
         
-    elif scelta == "📏 Elettrolivelle":
-        run_elettrolivelle()
-        
-    elif scelta == "📈 Monitoraggio - Stampe":
-        run_plotter()
+        # Logica di gerarchia sensori
+        cols = df_dati.columns[1:]
+        gerarchia = {}
+        for c in cols:
+            parti = str(c).split("_")
+            dl = parti[0]
+            sensore = "_".join(parti[:2])
+            if dl not in gerarchia: gerarchia[dl] = {}
+            if sensore not in gerarchia[dl]: gerarchia[dl][sensore] = []
+            gerarchia[dl][sensore].append(c)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            sel_dl = st.multiselect("Datalogger", list
