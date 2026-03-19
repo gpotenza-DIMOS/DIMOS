@@ -16,7 +16,7 @@ try:
 except ImportError:
     WORD_OK = False
 
-# --- FUNZIONI DI CALCOLO (Invariate) ---
+# --- FUNZIONI DI CARICAMENTO E PULIZIA (Le tue originali, intoccate) ---
 @st.cache_data(show_spinner=False)
 def carica_file_cache(uploaded_file):
     df_name = None
@@ -69,6 +69,7 @@ def run_plotter():
         st.image("logo_dimos.jpg", width=400)
     st.markdown("# Dati Monitoraggio - Visualizzazione e stampa")
 
+    # --- SIDEBAR (Parametri confermati) ---
     with st.sidebar:
         st.header("⚙️ Parametri Tecnici")
         sigma_val = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0)
@@ -88,16 +89,16 @@ def run_plotter():
             if sens not in gerarchia[dl]: gerarchia[dl][sens] = {}
             gerarchia[dl][sens][param] = col
 
-        # --- PARTE 1: VISUALIZZAZIONE INTERATTIVA ---
+        # --- 1. VISUALIZZAZIONE (Tornata all'originale funzionante) ---
         st.subheader("📊 Visualizzazione Grafica")
         cv1, cv2, cv3 = st.columns(3)
-        with cv1: sel_dl_v = st.multiselect("Datalogger", sorted(gerarchia.keys()), key="v1")
+        with cv1: sel_dl_v = st.multiselect("Datalogger", sorted(gerarchia.keys()))
         with cv2:
             s_opts_v = sorted(list(set([s for d in sel_dl_v for s in gerarchia[d].keys()])))
-            sel_sens_v = st.multiselect("Sensori", s_opts_v, key="v2")
+            sel_sens_v = st.multiselect("Sensori", s_opts_v)
         with cv3:
             p_opts_v = sorted(list(set([p for d in sel_dl_v for s in sel_sens_v if s in gerarchia[d] for p in gerarchia[d][s].keys()])))
-            sel_params_v = st.multiselect("Grandezze", p_opts_v, key="v3")
+            sel_params_v = st.multiselect("Grandezze", p_opts_v)
 
         if sel_params_v:
             fig = go.Figure()
@@ -117,54 +118,56 @@ def run_plotter():
                                             name=f"Trend {s}", line=dict(color="red", width=2, dash='dash')))
             st.plotly_chart(fig, use_container_width=True)
 
-        # --- PARTE 2: STAMPA WORD (SENZA KALEIDO) ---
+        # --- 2. REPORT WORD (Metodo alternativo che non usa Kaleido) ---
         st.divider()
         st.subheader("📄 Generazione Report")
-        cw1, cw2, cw3 = st.columns(3)
-        with cw1: sel_dl_w = st.multiselect("Datalogger (Report)", sorted(gerarchia.keys()), key="w1")
-        with cw2:
-            s_opts_w = sorted(list(set([s for d in sel_dl_w for s in gerarchia[d].keys()])))
-            sel_sens_w = st.multiselect("Sensori (Report)", s_opts_w, key="w2")
-        with cw3:
-            p_opts_w = sorted(list(set([p for d in sel_dl_w for s in sel_sens_w if s in gerarchia[d] for p in gerarchia[d][s].keys()])))
-            sel_params_w = st.multiselect("Grandezze (Report)", p_opts_w, key="w3")
+        with st.expander("Seleziona sensori per il report"):
+            cw1, cw2, cw3 = st.columns(3)
+            with cw1: sel_dl_w = st.multiselect("Datalogger (Report)", sorted(gerarchia.keys()), key="w1")
+            with cw2:
+                s_opts_w = sorted(list(set([s for d in sel_dl_w for s in gerarchia[d].keys()])))
+                sel_sens_w = st.multiselect("Sensori (Report)", s_opts_w, key="w2")
+            with cw3:
+                p_opts_w = sorted(list(set([p for d in sel_dl_w for s in sel_sens_w if s in gerarchia[d] for p in gerarchia[d][s].keys()])))
+                sel_params_w = st.multiselect("Grandezze (Report)", p_opts_w, key="w3")
 
         if st.button("🚀 Crea Report Word") and WORD_OK:
             doc = Document()
             doc.add_heading('Report Monitoraggio DIMOS', 0)
             
-            for d in sel_dl_w:
-                doc.add_heading(f'Centralina: {d}', level=1)
-                for s in sel_sens_w:
-                    if s in gerarchia[d]:
-                        for p in sel_params_w:
-                            if p in gerarchia[d][s]:
-                                y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
-                                doc.add_heading(f'Sensore: {s} - {p}', level=2)
-                                doc.add_paragraph(f"Filtri: Zeri rimossi: {diag['zeri']} | Outliers: {diag['gauss']}")
-                                
-                                # Creazione grafico con Matplotlib (Stabile al 100%)
-                                plt.figure(figsize=(8, 4))
-                                plt.plot(df_dati[col_t], y_c, label=p, color='#1f77b4', linewidth=1)
-                                if show_trend:
-                                    v_idx = y_c.notna()
-                                    if v_idx.sum() > 4:
-                                        x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
-                                        poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
-                                        plt.plot(df_dati[col_t], poly(df_dati[col_t].apply(lambda x: x.timestamp())), 
-                                                 color='red', linestyle='--', label='Trend')
-                                plt.title(f"{s} - {p}")
-                                plt.grid(True, alpha=0.3)
-                                plt.legend()
-                                
-                                img_stream = BytesIO()
-                                plt.savefig(img_stream, format='png', bbox_inches='tight')
-                                plt.close()
-                                doc.add_picture(img_stream, width=Inches(5.8))
+            with st.spinner("Generazione immagini..."):
+                for d in sel_dl_w:
+                    doc.add_heading(f'Centralina: {d}', level=1)
+                    for s in sel_sens_w:
+                        if s in gerarchia[d]:
+                            for p in sel_params_w:
+                                if p in gerarchia[d][s]:
+                                    y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
+                                    doc.add_heading(f'Sensore: {s} - {p}', level=2)
+                                    doc.add_paragraph(f"Filtri: Zeri rimossi: {diag['zeri']} | Outliers Gauss: {diag['gauss']}")
+                                    
+                                    # USIAMO MATPLOTLIB PER IL WORD: È INFALLIBILE
+                                    plt.figure(figsize=(10, 5))
+                                    plt.plot(df_dati[col_t], y_c, label=p, color='#1f77b4', marker='o', markersize=2, linestyle='-')
+                                    if show_trend:
+                                        v_idx = y_c.notna()
+                                        if v_idx.sum() > 4:
+                                            x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
+                                            poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
+                                            plt.plot(df_dati[col_t], poly(df_dati[col_t].apply(lambda x: x.timestamp())), 
+                                                     color='red', linestyle='--', linewidth=2, label='Trend 3° grado')
+                                    plt.title(f"Monitoraggio: {s} - {p}")
+                                    plt.grid(True, which='both', linestyle='--', alpha=0.5)
+                                    plt.legend()
+                                    
+                                    img_stream = BytesIO()
+                                    plt.savefig(img_stream, format='png', dpi=100)
+                                    plt.close()
+                                    doc.add_picture(img_stream, width=Inches(6))
             
             target = BytesIO()
             doc.save(target)
-            st.download_button("⬇️ Scarica Documento", target.getvalue(), "Report_DIMOS.docx")
+            st.download_button("⬇️ Scarica Documento Word", target.getvalue(), "Report_DIMOS.docx")
 
 if __name__ == "__main__":
     run_plotter()
