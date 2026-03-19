@@ -137,7 +137,7 @@ def run_plotter():
                                         x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
                                         poly = np.poly1d(np.polyfit(x_ts, y_v[v_idx], 3))
                                         fig.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
-                                            name=f"Trend {s}-{p}", line=dict(color=color, width=2.5, dash='dash'), opacity=1.2))
+                                            name=f"Trend {s}-{p}", line=dict(color=color, width=2.5, dash='dash'), opacity=0.9))
 
             fig.update_layout(height=650, template="plotly_white", xaxis=dict(rangeslider=dict(visible=True)), hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
