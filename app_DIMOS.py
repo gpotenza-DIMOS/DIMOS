@@ -4,16 +4,15 @@ import os
 # 1. Configurazione 
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# 2. CSS margini e layout (RIPRISTINATO ORIGINALE INTEGRALE)
+# 2. CSS INTEGRALE (Con animazione di apertura laterale e schiarimento)
 st.markdown("""
     <style>
-        /* Sidebar scura e logo Microgeo in alto a sx senza spazi */
+        /* Sidebar scura e logo Microgeo */
         [data-testid="stSidebarContent"] {
             background-color: #1a1c23 !important;
             padding-top: 0px !important;
         }
         
-        /* MODIFICA COLORI TESTO SIDEBAR: Grigio chiaro per leggibilità */
         [data-testid="stSidebarContent"] .stText, 
         [data-testid="stSidebarContent"] label, 
         [data-testid="stSidebarContent"] h1, 
@@ -22,17 +21,13 @@ st.markdown("""
         [data-testid="stSidebarContent"] p {
             color: #e0e0e0 !important;
         }
-        /* Colore specifico per i numeri/testo dentro i widget della sidebar */
-        [data-testid="stSidebarContent"] .stMarkdown {
-            color: #b8b8b8 !important;
-        }
 
         .microgeo-header {
             margin-top: -50px;
             margin-left: -5px;
         }
 
-        /* Pulsanti Sidebar e Home: RIPRISTINO ANIMAZIONE ORIGINALE */
+        /* ANIMAZIONE AVANZATA PULSANTI */
         div.stButton > button {
             width: 100%;
             border-radius: 0px;
@@ -42,16 +37,30 @@ st.markdown("""
             border: 1px solid #444 !important;
             background-color: #262730 !important;
             color: white !important;
-            transition: all 0.3s ease !important; /* L'animazione fluida */
+            text-align: left;
+            padding-left: 20px;
+            /* Transizione fluida per colore, larghezza e bordo */
+            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+            border-left: 0px solid #ff0000 !important; 
         }
         
         div.stButton > button:hover {
-            border-color: #00ff00 !important;
-            color: #00ff00 !important;
-            background-color: #333 !important;
+            background-color: #3e404b !important; /* Schiarisce lo sfondo */
+            color: #ffffff !important;
+            border-left: 8px solid #ff0000 !important; /* Apertura laterale rossa */
+            padding-left: 30px !important; /* Sposta il testo verso destra */
+            border-color: #555 !important;
+            box-shadow: 5px 0px 15px rgba(0,0,0,0.3);
         }
 
-        /* FIX LAYOUT IMMAGINE MAPPA PER EVITARE ESPLOSIONI VERTICALI */
+        /* Logout specifico (mantiene lo stile ma con colori diversi) */
+        div.stButton > button[key="logout_sidebar"] {
+            height: 45px !important;
+            background-color: #3d1a1a !important;
+            margin-top: 20px;
+        }
+
+        /* Fix per layout immagini mappa */
         .stImage > img {
             max-height: 450px;
             object-fit: contain;
@@ -61,12 +70,9 @@ st.markdown("""
 
 # 3. Sidebar di Navigazione
 with st.sidebar:
-    # Logo superiore con classe originale
     st.markdown('<div class="microgeo-header">', unsafe_allow_html=True)
     if os.path.exists("logo_microgeo.jpg"):
         st.image("logo_microgeo.jpg", use_container_width=True)
-    elif os.path.exists("logo_microgeo.png"):
-        st.image("logo_microgeo.png", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("### NAVIGAZIONE")
@@ -87,7 +93,6 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    # PULSANTE LOGOUT ORIGINALE
     if st.button("🚪 LOGOUT", key="logout_sidebar"):
         st.session_state["authenticated"] = False
         st.rerun()
@@ -110,9 +115,7 @@ if pg == "home":
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # GRIGLIA A 3 COLONNE
     c1, c2, c3 = st.columns(3)
-    
     with c1:
         with st.container(border=True):
             st.markdown("#### Modulo Elettrolivelle")
@@ -120,7 +123,6 @@ if pg == "home":
             if st.button("Analisi ELETTROLIVELLE", key="btn_el"):
                 st.session_state["page"] = "el"
                 st.rerun()
-
     with c2:
         with st.container(border=True):
             st.markdown("#### Modulo Grafici")
@@ -128,7 +130,6 @@ if pg == "home":
             if st.button("Analisi GRAFICA", key="btn_plotter"):
                 st.session_state["page"] = "plotter"
                 st.rerun()
-
     with c3:
         with st.container(border=True):
             st.markdown("#### Mappa & Strutture")
@@ -137,7 +138,6 @@ if pg == "home":
                 st.session_state["page"] = "map"
                 st.rerun()
 
-    # FOOTER CON DATI CORRETTI
     st.divider()
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
@@ -156,7 +156,7 @@ if pg == "home":
     if os.path.exists("logo_microgeo.jpg"):
         st.image("logo_microgeo.jpg", width=150)
 
-# REINDIRIZZAMENTO AI MODULI
+# LOGICA REINDIRIZZAMENTO
 elif pg == "plotter":
     import plotter_mod
     plotter_mod.run_plotter()
