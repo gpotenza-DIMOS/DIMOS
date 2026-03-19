@@ -1,124 +1,120 @@
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 import plotly.express as px
 import io
+from PIL import Image
+
+# Configurazione tipi di sensore e colori associati
+SENSOR_TYPES = {
+    "Elettrolivella": "#FF0000",   # Rosso
+    "Fessurimetro": "#00FF00",    # Verde
+    "Inclinometro": "#0000FF",    # Blu
+    "Estensimetro": "#FFFF00",    # Giallo
+    "Piezometro": "#FF00FF"       # Magenta
+}
 
 def render_territorial():
-    st.subheader("🌍 Posizionamento su Mappa GIS")
-    st.write("Carica un file CSV/Excel con le coordinate dei sensori.")
+    st.subheader("🌍 Posizionamento Territoriale (OpenStreetMap)")
     
-    up_map = st.file_uploader("Carica dati geografici", type=["csv", "xlsx"], key="up_gis")
+    if 'geo_sensors' not in st.session_state:
+        st.session_state['geo_sensors'] = []
+
+    # Coordinate iniziali (es. Sede Microgeo o centro Italia)
+    initial_lat, initial_lon = 43.8248, 11.1222 
+
+    st.info("Clicca sulla mappa per ottenere le coordinate, seleziona il tipo e conferma il posizionamento.")
+
+    # Creazione mappa base
+    fig = px.scatter_mapbox(
+        lat=[initial_lat], lon=[initial_lon],
+        zoom=12, height=600
+    )
     
-    if up_map:
-        try:
-            if up_map.name.endswith('.csv'):
-                df_map = pd.read_csv(up_map)
-            else:
-                df_map = pd.read_excel(up_map)
-                
-            cols = df_map.columns.tolist()
-            c1, c2, c3 = st.columns(3)
-            lat_col = c1.selectbox("Latitudine", cols)
-            lon_col = c2.selectbox("Longitudine", cols)
-            name_col = c3.selectbox("Etichetta", cols)
-            
-            fig = px.scatter_mapbox(df_map, lat=lat_col, lon=lon_col, hover_name=name_col,
-                                    color_discrete_sequence=["#ff0000"], zoom=12, height=500)
-            fig.update_layout(mapbox_style="open-street-map", margin={"r":0,"t":0,"l":0,"b":0})
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Errore nel caricamento dati: {e}")
+    # Se ci sono sensori salvati, li aggiungiamo
+    if st.session_state['geo_sensors']:
+        df = pd.DataFrame(st.session_state['geo_sensors'])
+        for s_type, group in df.groupby("type"):
+            fig.add_trace(go.Scattermapbox(
+                lat=group["lat"], lon=group["lon"],
+                mode='markers+text',
+                marker=go.scattermapbox.Marker(size=14, color=SENSOR_TYPES.get(s_type, "#FFFFFF")),
+                text=group["name"],
+                name=s_type,
+                hoverinfo="text"
+            ))
+
+    fig.update_layout(
+        mapbox_style="open-street-map",
+        margin={"r":0,"t":0,"l":0,"b":0},
+        clickmode='event+select'
+    )
+
+    # Visualizzazione mappa e cattura click
+    selected_point = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+
+    # Pannello di controllo posizionamento
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+        s_name = c1.text_input("ID Sensore", placeholder="es. Liv-01", key="geo_name")
+        s_type = c2.selectbox("Tipologia", list(SENSOR_TYPES.keys()), key="geo_type")
+        
+        # Gestione coordinate da click (se supportato dal browser/plotly)
+        st.caption("Nota: Inserisci le coordinate lette dal cursore sulla mappa per precisione.")
+        lat_in = c3.number_input("Lat", format="%.6f", value=initial_lat)
+        lon_in = c3.number_input("Lon", format="%.6f", value=initial_lon)
+
+        if c4.button("📍 PIAZZA", use_container_width=True):
+            st.session_state['geo_sensors'].append({"name": s_name, "lat": lat_in, "lon": lon_in, "type": s_type})
+            st.rerun()
 
 def render_structural():
-    st.subheader("🏗️ Layout Strutturale")
-    st.info("Carica una foto della struttura. Passa il mouse sull'immagine per leggere le coordinate (x, y) e aggiungi i sensori.")
+    st.subheader("🏗️ Layout su Foto Struttura")
     
-    img_file = st.file_uploader("Seleziona immagine struttura", type=["jpg", "png", "jpeg"], key="up_struct")
+    img_file = st.file_uploader("Carica foto struttura", type=["jpg", "png", "jpeg"])
     
     if img_file:
-        # Leggiamo l'immagine senza Pillow (PIL) usando direttamente i bytes per evitare errori di modulo
-        img_bytes = img_file.read()
-        
-        if 'sensor_coords' not in st.session_state:
-            st.session_state['sensor_coords'] = []
-            
-        # Creiamo il grafico Plotly con l'immagine di sfondo
-        import plotly.graph_objects as go
-        from PIL import Image
-        
-        # Uso io.BytesIO per gestire l'immagine
-        image = Image.open(io.BytesIO(img_bytes))
+        if 'struc_sensors' not in st.session_state:
+            st.session_state['struc_sensors'] = []
+
+        image = Image.open(img_file)
         width, height = image.size
 
         fig = go.Figure()
-
-        # Aggiungi immagine come sfondo
         fig.add_layout_image(
-            dict(
-                source=image,
-                xref="x", yref="y",
-                x=0, y=height,
-                sizex=width, sizey=height,
-                sizing="stretch",
-                layer="below"
-            )
+            dict(source=image, xref="x", yref="y", x=0, y=height, sizex=width, sizey=height, 
+                 sizing="stretch", layer="below")
         )
+        
+        # Disegno sensori esistenti
+        if st.session_state['struc_sensors']:
+            df = pd.DataFrame(st.session_state['struc_sensors'])
+            for s_type, group in df.groupby("type"):
+                fig.add_trace(go.Scatter(
+                    x=group["x"], y=group["y"], mode='markers+text',
+                    marker=dict(color=SENSOR_TYPES.get(s_type, "#FFF"), size=15, symbol='square'),
+                    text=group["name"], textposition="top center", name=s_type
+                ))
 
-        # Configura assi
-        fig.update_xaxes(range=[0, width], showgrid=False, zeroline=False, visible=False)
-        fig.update_yaxes(range=[0, height], showgrid=False, zeroline=False, visible=False, scaleanchor="x", scaleratio=1)
-
-        # Disegna i sensori già salvati
-        if st.session_state['sensor_coords']:
-            df = pd.DataFrame(st.session_state['sensor_coords'])
-            fig.add_trace(go.Scatter(
-                x=df['x'], y=df['y'],
-                mode='markers+text',
-                marker=dict(color='#ff0000', size=15, symbol='circle', line=dict(color='white', width=2)),
-                text=df['name'],
-                textposition="top center",
-                name="Sensori"
-            ))
-
-        fig.update_layout(
-            width=width, height=height,
-            margin=dict(l=0, r=0, t=0, b=0),
-            hovermode='closest'
-        )
+        fig.update_xaxes(range=[0, width], visible=False)
+        fig.update_yaxes(range=[0, height], visible=False, scaleanchor="x")
+        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=600, showlegend=True)
 
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Pannello di controllo sensori
-        with st.container(border=True):
-            st.markdown("#### Gestione Punti di Monitoraggio")
-            c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-            new_name = c1.text_input("Identificativo Sensore (es. S01)")
-            pos_x = c2.number_input("Coordinata X", value=0)
-            pos_y = c3.number_input("Coordinata Y", value=0)
-            
-            if c4.button("➕ AGGIUNGI", use_container_width=True):
-                if new_name:
-                    st.session_state['sensor_coords'].append({'name': new_name, 'x': pos_x, 'y': pos_y})
-                    st.rerun()
-                else:
-                    st.warning("Inserisci un nome!")
 
-        if st.button("🗑️ RESETTA LAYOUT"):
-            st.session_state['sensor_coords'] = []
-            st.rerun()
+        # Pannello manuale
+        with st.container(border=True):
+            st.write("Identifica le coordinate passando il mouse sulla foto:")
+            c1, c2, c3, c4, c5 = st.columns([2, 2, 1, 1, 1])
+            n = c1.text_input("Nome", key="st_name")
+            t = c2.selectbox("Tipo", list(SENSOR_TYPES.keys()), key="st_type")
+            x = c3.number_input("X", value=0)
+            y = c4.number_input("Y", value=0)
+            if c5.button("✅ AGGIUNGI", use_container_width=True):
+                st.session_state['struc_sensors'].append({"name": n, "x": x, "y": y, "type": t})
+                st.rerun()
 
 def run_map_manager():
-    # Stile per i tab per richiamare il rosso Microgeo
-    st.markdown("""
-        <style>
-            button[data-baseweb="tab"] { font-size: 18px; font-weight: bold; }
-            button[aria-selected="true"] { color: #ff0000 !important; border-bottom-color: #ff0000 !important; }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    t1, t2 = st.tabs(["🌍 MONITORAGGIO TERRITORIALE", "🏗️ LAYOUT STRUTTURALE"])
-    
-    with t1:
-        render_territorial()
-    with t2:
-        render_structural()
+    t1, t2 = st.tabs(["🌍 MAPPA TERRITORIALE", "🖼️ LAYOUT FOTO"])
+    with t1: render_territorial()
+    with t2: render_structural()
