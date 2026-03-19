@@ -89,7 +89,7 @@ def run_plotter():
             if sens not in gerarchia[dl]: gerarchia[dl][sens] = {}
             gerarchia[dl][sens][param] = col
 
-        # --- SEZIONE VISUALIZZAZIONE (INVARIATA) ---
+        # --- VISUALIZZAZIONE A SCHERMO ---
         st.subheader("📊 Visualizzazione Grafica")
         cv1, cv2, cv3 = st.columns(3)
         with cv1: sel_dl_v = st.multiselect("Datalogger", sorted(gerarchia.keys()), key="v1")
@@ -123,7 +123,7 @@ def run_plotter():
             fig.update_layout(height=600, template="plotly_white", xaxis=dict(rangeslider=dict(visible=True)))
             st.plotly_chart(fig, use_container_width=True)
 
-        # --- SEZIONE REPORT WORD (CON FIX GRAFICI) ---
+        # --- REPORT WORD ---
         st.divider()
         st.subheader("📄 Report Word con Grafici")
         with st.container(border=True):
@@ -140,7 +140,7 @@ def run_plotter():
                 doc = Document()
                 doc.add_heading('Report Monitoraggio DIMOS', 0)
                 
-                with st.spinner("Creazione del documento con grafici..."):
+                with st.spinner("Generazione immagini..."):
                     for d in sel_dl_w:
                         doc.add_heading(f'Centralina: {d}', level=1)
                         for s in sel_sens_w:
@@ -150,33 +150,36 @@ def run_plotter():
                                     doc.add_heading(f'Sensore: {s}', level=2)
                                     for p in p_list:
                                         y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
-                                        doc.add_paragraph(f"Grandezza: {p}")
-                                        doc.add_paragraph(f"Info Pulizia -> Zeri: {diag['zeri']} | Gauss: {diag['gauss']}")
+                                        doc.add_paragraph(f"Grandezza: {p} | Zeri: {diag['zeri']} | Gauss: {diag['gauss']}")
                                         
-                                        # CREAZIONE IMMAGINE GRAFICO
                                         fig_w = go.Figure()
                                         fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=y_c, name=p, line=dict(color="#1f77b4", width=1.5)))
-                                        
                                         if show_trend:
                                             v_idx = y_c.notna()
                                             if v_idx.sum() > 4:
                                                 x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
                                                 poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
-                                                fig_w.add_trace(go.Scatter(
-                                                    x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
+                                                fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
                                                     line=dict(color="red", width=2.5, dash='dash'), opacity=0.9))
                                         
-                                        fig_w.update_layout(title=f"{s} - {p}", width=800, height=400, template="plotly_white")
+                                        fig_w.update_layout(width=800, height=400, template="plotly_white", margin=dict(l=40, r=40, t=40, b=40))
                                         
+                                        # PROVA ESPORTAZIONE (DOPPIO TENTATIVO)
                                         try:
-                                            img_bytes = fig_w.to_image(format="png", engine="kaleido")
-                                            doc.add_picture(BytesIO(img_bytes), width=Inches(6))
-                                        except Exception as e:
-                                            doc.add_paragraph(f"⚠️ Errore grafico: installare kaleido==0.1.0.post1")
+                                            img_data = fig_w.to_image(format="png", engine="kaleido")
+                                            doc.add_picture(BytesIO(img_data), width=Inches(6))
+                                        except:
+                                            try:
+                                                # Tentativo di sblocco forzato
+                                                import kaleido
+                                                img_data = fig_w.to_image(format="png")
+                                                doc.add_picture(BytesIO(img_data), width=Inches(6))
+                                            except:
+                                                doc.add_paragraph("⚠️ Riavviare l'app o reinstallare kaleido==0.1.0.post1")
 
                 buf = BytesIO()
                 doc.save(buf)
-                st.download_button("⬇️ Scarica Report", buf.getvalue(), "Report_DIMOS_Completo.docx")
+                st.download_button("⬇️ Scarica Report", buf.getvalue(), "Report_DIMOS_Finale.docx")
 
 if __name__ == "__main__":
     run_plotter()
