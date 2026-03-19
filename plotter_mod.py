@@ -5,11 +5,19 @@ import plotly.graph_objects as go
 import os
 import re
 from datetime import datetime
+from io import BytesIO
 
-# --- CACHE DEL CARICAMENTO DATI (Velocizza il refresh) ---
+# --- GESTIONE LIBRERIE (Invariate) ---
+try:
+    from docx import Document
+    from docx.shared import Inches
+    WORD_OK = True
+except ImportError:
+    WORD_OK = False
+
+# --- CACHE E OTTIMIZZAZIONE (Velocità Massima) ---
 @st.cache_data(show_spinner=False)
-def carica_e_pulisci_file(uploaded_file):
-    """Legge il file una sola volta e lo tiene in memoria cache."""
+def carica_dati_ottimizzato(uploaded_file):
     df_name = None
     if uploaded_file.name.endswith(('.xlsx', '.xlsm')):
         xls = pd.ExcelFile(uploaded_file)
@@ -25,7 +33,22 @@ def carica_e_pulisci_file(uploaded_file):
     df_dati = df_dati.dropna(subset=[col_t]).sort_values(col_t)
     return df_dati, df_name
 
-# --- LOGICA DI PARSING (Invariata) ---
+def pulisci_dati(serie, n_sigma, drop_zeros):
+    originale = serie.copy()
+    diag = {"zeri": 0, "gauss": 0}
+    if drop_zeros:
+        diag["zeri"] = int((originale == 0).sum())
+        originale = originale.replace(0, np.nan)
+    validi = originale.dropna()
+    if not validi.empty and n_sigma > 0:
+        mean, std = validi.mean(), validi.std()
+        if std > 0:
+            lower, upper = mean - n_sigma * std, mean + n_sigma * std
+            outliers = (originale < lower) | (originale > upper)
+            diag["gauss"] = int(outliers.sum())
+            originale[outliers] = np.nan
+    return originale, diag
+
 def parse_column_info(col_name, df_name=None, col_index=None):
     if df_name is not None and col_index is not None:
         try:
@@ -52,22 +75,6 @@ def parse_column_info(col_name, df_name=None, col_index=None):
     else: sens_base, param = "Vari", "Dato"
     return dl, sens_base, f"{param}{unit}"
 
-def pulisci_dati(serie, n_sigma, drop_zeros):
-    originale = serie.copy()
-    diag = {"zeri": 0, "gauss": 0}
-    if drop_zeros:
-        diag["zeri"] = int((originale == 0).sum())
-        originale = originale.replace(0, np.nan)
-    validi = originale.dropna()
-    if not validi.empty and n_sigma > 0:
-        mean, std = validi.mean(), validi.std()
-        if std > 0:
-            lower, upper = mean - n_sigma * std, mean + n_sigma * std
-            outliers = (originale < lower) | (originale > upper)
-            diag["gauss"] = int(outliers.sum())
-            originale[outliers] = np.nan
-    return originale, diag
-
 def run_plotter():
     if os.path.exists("logo_dimos.jpg"):
         st.image("logo_dimos.jpg", width=400)
@@ -84,11 +91,9 @@ def run_plotter():
     uploaded_file = st.file_uploader("📂 Carica file Excel o CSV", type=['xlsx', 'xlsm', 'csv'])
 
     if uploaded_file:
-        # Caricamento ottimizzato con cache
-        df_dati, df_name = carica_e_pulisci_file(uploaded_file)
+        df_dati, df_name = carica_dati_ottimizzato(uploaded_file)
         col_t = df_dati.columns[0]
 
-        # Ricostruzione gerarchia (molto veloce)
         gerarchia = {}
         for i, col in enumerate(df_dati.columns):
             if i == 0: continue
@@ -112,14 +117,7 @@ def run_plotter():
                     if s in gerarchia[d]: opts_param.extend(gerarchia[d][s].keys())
             sel_params = st.multiselect("3. Grandezze", options=sorted(list(set(opts_param))))
 
-        # Filtro Tempo (Veloce grazie alla copia ridotta)
-        st.write("---")
-        min_d, max_d = df_dati[col_t].min().date(), df_dati[col_t].max().date()
-        t1, t2 = st.columns(2)
-        with t1: start_dt = st.date_input("Inizio", min_d)
-        with t2: end_dt = st.date_input("Fine", max_d)
-
-        # --- PLOT (Ottimizzato per velocità di rendering) ---
+        # --- GESTIONE GRAFICO (Visualizzazione Fluida) ---
         targets = []
         for d in sel_dl:
             for s in sel_sens:
@@ -128,40 +126,75 @@ def run_plotter():
                         if p in gerarchia[d][s]: targets.append((gerarchia[d][s][p], f"{s} - {p}"))
 
         if targets:
-            mask = (df_dati[col_t].dt.date >= start_dt) & (df_dati[col_t].dt.date <= end_dt)
-            df_p = df_dati.loc[mask]
-            
-            if not df_p.empty:
-                fig = go.Figure()
-                colors = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3"]
-                report_stats = []
+            fig = go.Figure()
+            colors = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3"]
+            report_stats = []
 
-                for idx, (col_id, display_name) in enumerate(targets):
-                    color = colors[idx % len(colors)]
-                    y_vals, diag = pulisci_dati(df_p[col_id], sigma_val, rimuovi_zeri)
-                    diag["Parametro"] = display_name
-                    report_stats.append(diag)
+            for idx, (col_id, display_name) in enumerate(targets):
+                color = colors[idx % len(colors)]
+                y_vals, diag = pulisci_dati(df_dati[col_id], sigma_val, rimuovi_zeri)
+                diag["Parametro"] = display_name
+                report_stats.append(diag)
 
-                    # Grafico Dati
-                    fig.add_trace(go.Scatter(
-                        x=df_p[col_t], y=y_vals, name=display_name,
-                        mode='lines+markers', line=dict(color=color, width=1.2),
-                        marker=dict(size=3), connectgaps=False
-                    ))
+                # Dati Reali
+                fig.add_trace(go.Scatter(
+                    x=df_dati[col_t], y=y_vals, name=display_name,
+                    mode='lines+markers', line=dict(color=color, width=1.2),
+                    marker=dict(size=3)
+                ))
 
-                    # Grafico Trend (Calcolato solo se necessario)
-                    if show_trend:
-                        v_idx = y_vals.notna()
-                        if v_idx.sum() > 4:
-                            x_ts = df_p.loc[v_idx, col_t].apply(lambda x: x.timestamp())
-                            poly = np.poly1d(np.polyfit(x_ts, y_vals[v_idx], 3))
-                            fig.add_trace(go.Scatter(
-                                x=df_p[col_t], y=poly(df_p[col_t].apply(lambda x: x.timestamp())),
-                                name=f"Trend {display_name}", line=dict(color=color, width=2, dash='dash'), opacity=0.4
-                            ))
+                # Trend
+                if show_trend:
+                    v_idx = y_vals.notna()
+                    if v_idx.sum() > 4:
+                        x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
+                        poly = np.poly1d(np.polyfit(x_ts, y_vals[v_idx], 3))
+                        fig.add_trace(go.Scatter(
+                            x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
+                            name=f"Trend {display_name}", line=dict(color=color, width=2, dash='dash'), opacity=0.4
+                        ))
 
-                fig.update_layout(height=700, template="plotly_white", xaxis=dict(rangeslider=dict(visible=True)), showlegend=True)
-                st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
-                st.table(pd.DataFrame(report_stats).set_index("Parametro"))
-            else:
-                st.warning("Nessun dato nel periodo selezionato.")
+            fig.update_layout(
+                height=650, template="plotly_white",
+                xaxis=dict(title="Data", rangeslider=dict(visible=True), type='date'),
+                legend=dict(orientation="h", y=-0.2)
+            )
+            # NOTA: Usiamo il RangeSlider nativo di Plotly per lo zoom istantaneo
+            st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
+            st.table(pd.DataFrame(report_stats).set_index("Parametro"))
+
+        # --- SEZIONE STAMPA WORD (Selettiva come Elettrolivelle) ---
+        st.divider()
+        st.subheader("📄 Generazione Report Word")
+        with st.expander("Configura ed Esporta Report"):
+            c_w1, c_w2 = st.columns(2)
+            with c_w1:
+                sel_dl_w = st.multiselect("Centraline da stampare", options=sorted(gerarchia.keys()), key="dl_word")
+            with c_w2:
+                opts_p_w = []
+                for d in sel_dl_w:
+                    for s in gerarchia[d]: opts_p_w.extend(gerarchia[d][s].keys())
+                sel_params_w = st.multiselect("Grandezze da includere", options=sorted(list(set(opts_p_w))), key="p_word")
+
+            if st.button("Genera Report .docx") and WORD_OK:
+                doc = Document()
+                doc.add_heading('Report Monitoraggio DIMOS', 0)
+                
+                for d in sel_dl_w:
+                    doc.add_heading(f'Datalogger: {d}', level=1)
+                    for s in gerarchia[d]:
+                        # Filtra solo i parametri scelti dall'utente per la stampa
+                        params_to_print = [p for p in gerarchia[d][s] if p in sel_params_w]
+                        if params_to_print:
+                            doc.add_heading(f'Sensore: {s}', level=2)
+                            for p in params_to_print:
+                                col_id = gerarchia[d][s][p]
+                                y_clean, diag = pulisci_dati(df_dati[col_id], sigma_val, rimuovi_zeri)
+                                doc.add_paragraph(f"Parametro: {p} | Zeri rimossi: {diag['zeri']} | Outliers Gauss: {diag['gauss']}")
+                
+                buf = BytesIO()
+                doc.save(buf)
+                st.download_button("⬇️ Scarica File Word", buf.getvalue(), "Report_Monitoraggio.docx")
+
+if __name__ == "__main__":
+    run_plotter()
