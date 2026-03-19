@@ -22,15 +22,15 @@ st.markdown("""
             width: 100% !important;
             background-color: #2d303d !important;
             color: #ffffff !important;
-            border: 1px solid #595e70 !important;
+            border: 1px solid #58607e !important;
             border-radius: 0px !important;
             text-align: left !important;
             padding: 15px 20px !important;
             margin: 0px !important;
         }
         div.stButton > button:hover {
-            border-left: 5px solid #ff4b4b !important;
-            background-color: #3d4150 !important;
+            border-left: 8px solid #ff4b4b !important;
+            background-color: #54533e !important;
         }
 
         /* Rimuove header e padding inutili */
@@ -103,7 +103,7 @@ if pg == "home":
     with c1:
         with st.container(border=True):
             st.markdown("#### Modulo Elettrolivelle")
-            st.write("Calcolo mm, Delta C0 e Analisi Statistica Gaussiana.")
+            st.write("Calcolo cedimenti, Grafici e Analisi Statistica.")
             if st.button("Analisi ELETTROLIVELLE", key="btn_el"):
                 st.session_state["page"] = "el"
                 st.rerun()
@@ -111,7 +111,7 @@ if pg == "home":
     with c2:
         with st.container(border=True):
             st.markdown("#### Modulo Grafici e Report")
-            st.write("Visualizzazione serie storiche e generazione file Word/Excel.")
+            st.write("Visualizzazione grafici, analisi e generazione file Word/Excel.")
             if st.button("GRAFICI ", key="btn_pl"):
                 st.session_state["page"] = "pl"
                 st.rerun()
