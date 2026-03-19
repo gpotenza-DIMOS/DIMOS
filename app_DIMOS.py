@@ -4,7 +4,7 @@ import os
 # 1. Configurazione 
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# 2. CSS per eliminare i margini e pulire il layout
+# 2. CSS margini e layout
 st.markdown("""
     <style>
         /* Sidebar scura e logo Microgeo in alto a sx senza spazi */
@@ -22,7 +22,7 @@ st.markdown("""
             width: 100% !important;
             background-color: #2d303d !important;
             color: #ffffff !important;
-            border: 1px solid #3d4150 !important;
+            border: 1px solid #595e70 !important;
             border-radius: 0px !important;
             text-align: left !important;
             padding: 15px 20px !important;
@@ -86,7 +86,7 @@ if pg == "home":
     st.divider()
 
     # --- ZONA IMMAGINI (ESTERNE AI RIQUADRI) ---
-    st.markdown("### Modulo Analisi")
+    st.markdown("### Gestione e Analisi")
     col_img1, col_img2 = st.columns([1, 4])
     with col_img1:
         if os.path.exists("logo_DIMOScircle.jpg"):
@@ -102,17 +102,17 @@ if pg == "home":
     
     with c1:
         with st.container(border=True):
-            st.markdown("#### Gestione Elettrolivelle")
+            st.markdown("#### Modulo Elettrolivelle")
             st.write("Calcolo mm, Delta C0 e Analisi Statistica Gaussiana.")
-            if st.button("AVVIA ELETTROLIVELLE", key="btn_el"):
+            if st.button("Analisi ELETTROLIVELLE", key="btn_el"):
                 st.session_state["page"] = "el"
                 st.rerun()
 
     with c2:
         with st.container(border=True):
-            st.markdown("#### Grafici e Reportistica")
+            st.markdown("#### Modulo Grafici e Report")
             st.write("Visualizzazione serie storiche e generazione file Word/Excel.")
-            if st.button("AVVIA MODULO GRAFICI", key="btn_pl"):
+            if st.button("GRAFICI ", key="btn_pl"):
                 st.session_state["page"] = "pl"
                 st.rerun()
 
