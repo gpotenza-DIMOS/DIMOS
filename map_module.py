@@ -2,95 +2,125 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import os
+import plotly.express as px
 from PIL import Image
+import os
+import json
+
+# --- GESTIONE DATABASE POSIZIONI ---
+# Questo file salva dove hai messo i sensori così non devi rifarlo ogni volta
+CONFIG_FILE = "sensor_positions.json"
+
+def load_positions():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_positions(positions):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(positions, f)
 
 def run_map_manager():
-    st.header("📍 MAPPA & STRUTTURE")
+    st.header("📍 Centro Controllo Mappe")
 
-    # 1. Controllo se i dati sono stati caricati nel Plotter
-    if 'df_values' not in st.session_state or st.session_state['df_values'] is None:
-        st.warning("⚠️ Nessun dato caricato. Torna in 'ANALISI GRAFICA' e carica un file Excel per vedere i sensori sulla mappa.")
+    # Verifica se ci sono dati caricati dal plotter
+    if 'df_values' not in st.session_state:
+        st.warning("⚠️ Carica prima un file Excel nel modulo 'ANALISI GRAFICA' per importare i nomi dei sensori.")
         return
 
-    df_values = st.session_state['df_values']
-    col_tempo = st.session_state['col_tempo']
-
-    # 2. Layout a colonne: Mappa a sinistra, Dati a destra
-    col_mappa, col_info = st.columns([2, 1])
-
-    with col_mappa:
-        st.subheader("Inquadramento Strutturale")
-        # Visualizzazione dell'immagine di sfondo (es. la foto del cantiere o GIS)
-        sfondo = "montita.jpg" # Puoi cambiare questo file con quello della mappa specifica
-        if os.path.exists(sfondo):
-            image = Image.open(sfondo)
-            st.image(image, caption="Vista Struttura / Mappa Sensori", use_container_width=True)
-        else:
-            st.info("🖼️ Carica un'immagine 'montita.jpg' nella cartella principale per vederla qui come mappa.")
-
-    with col_info:
-        st.subheader("Stato Sensori")
-        
-        # Estrazione ultimi valori disponibili
-        last_readings = df_values.iloc[-1]
-        last_time = last_readings[col_tempo].strftime('%d/%m/%Y %H:%M')
-        
-        st.metric("Ultimo Aggiornamento", last_time)
-        st.divider()
-
-        # Filtriamo solo le colonne numeriche (escludendo la data) per mostrare i sensori
-        cols_sensori = [c for c in df_values.columns if c != col_tempo]
-        
-        # Selezione rapida per vedere il valore attuale di un sensore
-        sensore_sel = st.selectbox("Seleziona un sensore per i dettagli:", cols_sensori)
-        
-        valore_attuale = last_readings[sensore_sel]
-        
-        # Determina unità di misura per l'estetica
-        unita = "°" if "°" in sensore_sel else "mm" if "mm" in sensore_sel.lower() else "val"
-        
-        st.markdown(f"""
-        <div style="padding:20px; border-radius:10px; background-color:#262730; border-left: 5px solid #ff0000;">
-            <h4 style="margin:0;">{sensore_sel}</h4>
-            <h2 style="margin:10px 0; color:#ff0000;">{valore_attuale:.3f} {unita}</h2>
-            <p style="font-size:0.8em; color:gray;">Valore registrato il {last_time}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # 3. Mini Grafico di monitoraggio rapido in basso
-    st.divider()
-    st.subheader(f"Andamento Rapido: {sensore_sel}")
+    df = st.session_state['df_values']
+    col_t = st.session_state['col_tempo']
+    sensori_disponibili = [c for c in df.columns if c != col_t]
     
-    # Mostriamo solo gli ultimi 100 punti per velocità nella mappa
-    df_mini = df_values.tail(100)
-    
-    fig_mini = go.Figure()
-    fig_mini.add_trace(go.Scatter(
-        x=df_mini[col_tempo], 
-        y=df_mini[sensore_sel],
-        mode='lines',
-        line=dict(color='#ff0000', width=2),
-        fill='tozeroy'
-    ))
-    
-    fig_mini.update_layout(
-        height=250,
-        margin=dict(l=20, r=20, t=30, b=20),
-        template="plotly_white",
-        xaxis_title="Tempo",
-        yaxis_title=unita
-    )
-    
-    st.plotly_chart(fig_mini, use_container_width=True)
+    # Carica posizioni salvate
+    posizioni_salvate = load_positions()
 
-    # 4. Tabella riassuntiva di tutti i sensori
-    with st.expander("📋 Tabella Riassuntiva Ultimi Valori"):
-        riassunto = pd.DataFrame({
-            "Sensore": cols_sensori,
-            "Ultimo Valore": [f"{df_values[c].iloc[-1]:.4f}" for c in cols_sensori]
-        })
-        st.dataframe(riassunto, use_container_width=True, hide_index=True)
+    tab_img, tab_gis = st.tabs(["🏗️ Mappa Strutturale (Immagine)", "🌍 Mappa Territoriale (GIS)"])
 
-if __name__ == "__main__":
-    run_map_manager()
+    # --- SCHEDA 1: MAPPA SU IMMAGINE ---
+    with tab_img:
+        st.subheader("Posizionamento Sensori su Foto/Disegno")
+        
+        up_img = st.file_uploader("Carica Planimetria o Foto (JPG/PNG)", type=["jpg", "png", "jpeg"])
+        img_path = "map_background.jpg"
+        
+        if up_img:
+            img = Image.open(up_img)
+            img.save(img_path)
+        
+        if os.path.exists(img_path):
+            img = Image.open(img_path)
+            width, height = img.size
+            
+            st.info("💡 Seleziona un sensore e clicca sulla mappa per posizionarlo.")
+            
+            col_sel, col_reset = st.columns([3, 1])
+            with col_sel:
+                sensore_da_piazzare = st.selectbox("1. Scegli Sensore da Excel:", sensori_disponibili)
+            
+            # Creazione del grafico Plotly con l'immagine come sfondo
+            fig = go.Figure()
+
+            # Aggiunta immagine di sfondo
+            fig.add_layout_image(
+                dict(source=img, x=0, y=height, sizex=width, sizey=height, 
+                     xref="x", yref="y", sizing="stretch", opacity=1, layer="below")
+            )
+
+            # Preparazione dati per i sensori già posizionati
+            x_pos, y_pos, names, values = [], [], [], []
+            for s in sensori_disponibili:
+                if s in posizioni_salvate.get("image", {}):
+                    p = posizioni_salvate["image"][s]
+                    x_pos.append(p['x'])
+                    y_pos.append(p['y'])
+                    names.append(s)
+                    values.append(df[s].iloc[-1]) # Ultimo valore letto
+
+            # Disegno dei sensori sulla mappa
+            fig.add_trace(go.Scatter(
+                x=x_pos, y=y_pos, mode='markers+text',
+                marker=dict(size=15, color='red', symbol='circle'),
+                text=[f"{n}<br>{v:.2f}" for n, v in zip(names, values)],
+                textposition="top center",
+                hovertemplate="<b>%{text}</b><extra></extra>",
+                name="Sensori Posizionati"
+            ))
+
+            fig.update_xaxes(range=[0, width], showgrid=False, zeroline=False, visible=False)
+            fig.update_yaxes(range=[0, height], showgrid=False, zeroline=False, visible=False)
+            fig.update_layout(width=width, height=height, margin=dict(l=0, r=0, t=0, b=0), clickmode='event+select')
+
+            # Cattura del click per posizionare (Simulazione Drag&Drop)
+            selected_point = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+            
+            # Se l'utente clicca, salviamo la nuova posizione
+            if selected_point and "points" in selected_point and selected_point["points"]:
+                pt = selected_point["points"][0]
+                new_x, new_y = pt['x'], pt['y']
+                
+                if "image" not in posizioni_salvate: posizioni_salvate["image"] = {}
+                posizioni_salvate["image"][sensore_da_piazzare] = {"x": new_x, "y": new_y}
+                save_positions(posizioni_salvate)
+                st.success(f"Sensore {sensore_da_piazzare} posizionato!")
+                st.rerun()
+
+    # --- SCHEDA 2: MAPPA TERRITORIALE (GIS) ---
+    with tab_gis:
+        st.subheader("Monitoraggio Ambientale su Mappa OpenStreetMap")
+        
+        # Centro mappa (default Campi Bisenzio o media sensori)
+        m_lat, m_lon = 43.82, 11.13 
+        
+        fig_gis = px.scatter_mapbox(
+            lat=[], lon=[], text=[], size_max=15, zoom=10
+        )
+        
+        # Qui potremmo integrare Folium per un Drag&Drop GIS reale
+        st.warning("In questa sezione puoi inserire le coordinate Lat/Lon nell'Excel per vedere i sensori sul territorio.")
+        
+        # Esempio tabella per inserimento manuale coordinate
+        with st.expander("Modifica Coordinate Geografiche"):
+            # Logica per inserire Lat/Lon se non presenti nell'Excel
+            st.write("Funzione in fase di sviluppo per il mapping GIS...")
