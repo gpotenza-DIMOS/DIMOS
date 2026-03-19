@@ -34,7 +34,8 @@ def pulisci_dati(serie, n_sigma, drop_zeros):
 
 def run_plotter():
     # --- HEADER ---
-    st.image("logo_dimos.jpg", width=400)
+    if os.path.exists("logo_dimos.jpg"):
+        st.image("logo_dimos.jpg", width=400)
     st.markdown("# Dati Monitoraggio - Visualizzazione e stampa")
     st.divider()
 
@@ -45,7 +46,7 @@ def run_plotter():
         rimuovi_zeri = st.checkbox("Elimina letture a '0'", value=True)
         st.divider()
 
-    # --- CARICAMENTO FILE (PAGINA PRINCIPALE) ---
+    # --- CARICAMENTO FILE ---
     uploaded_file = st.file_uploader("📂 Carica file Excel (NAME + Dati) o CSV", type=['xlsx', 'csv'])
 
     if uploaded_file:
@@ -55,19 +56,15 @@ def run_plotter():
         try:
             if uploaded_file.name.endswith('.xlsx'):
                 xls = pd.ExcelFile(uploaded_file)
-                # Identifica foglio Dati (non NAME)
                 sheet_dati = [s for s in xls.sheet_names if s != "NAME"][0]
                 df_dati = pd.read_excel(xls, sheet_name=sheet_dati)
                 
                 if "NAME" in xls.sheet_names:
                     df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
-                    # Riga 1 (0): Centralina | Riga 2 (1): Sensore | Riga 3 (2): Parametro
                     for i, col_name in enumerate(df_dati.columns):
-                        if i == 0: continue # Salta data
+                        if i == 0: continue 
                         try:
-                            # Centralina (Riga 1)
                             dl = str(df_name.iloc[0, i]).strip() if len(df_name) > 0 else "DL_Generico"
-                            # Sensore (Riga 2)
                             sens = str(df_name.iloc[1, i]).strip() if len(df_name) > 1 else "Sensore"
                         except:
                             dl, sens = "Generale", "Vari"
@@ -76,22 +73,33 @@ def run_plotter():
                         if sens not in gerarchia[dl]: gerarchia[dl][sens] = []
                         gerarchia[dl][sens].append(col_name)
             else:
+                # Migliorata lettura CSV
                 df_dati = pd.read_csv(uploaded_file, sep=None, engine='python')
 
-            # --- FALLBACK GERARCHIA (Parsing nomi se manca NAME) ---
+            # --- GESTIONE TEMPO (Punto Critico) ---
+            col_t = df_dati.columns[0]
+            # Prova diversi formati comuni se la conversione standard fallisce
+            df_dati[col_t] = pd.to_datetime(df_dati[col_t], errors='coerce')
+            
+            # Se la conversione fallisce, prova a forzare il formato italiano tipico dei CSV
+            if df_dati[col_t].isnull().all():
+                df_dati[col_t] = pd.to_datetime(df_dati[col_t], dayfirst=True, errors='coerce')
+
+            df_dati = df_dati.dropna(subset=[col_t]).sort_values(col_t)
+
+            if df_dati.empty:
+                st.error("Errore: Impossibile interpretare le date nella prima colonna.")
+                return
+
+            # --- FALLBACK GERARCHIA ---
             if not gerarchia:
                 for col in df_dati.columns[1:]:
-                    parts = col.split(' ')
-                    dl = parts[0].split('_')[0] + "_" + parts[0].split('_')[1] if '_' in parts[0] else parts[0]
-                    sens = parts[0]
+                    parts = str(col).split('_')
+                    dl = parts[0] if len(parts) > 0 else "Dati"
+                    sens = col
                     if dl not in gerarchia: gerarchia[dl] = {}
                     if sens not in gerarchia[dl]: gerarchia[dl][sens] = []
                     gerarchia[dl][sens].append(col)
-
-            # --- GESTIONE TEMPO ---
-            col_t = df_dati.columns[0]
-            df_dati[col_t] = pd.to_datetime(df_dati[col_t], dayfirst=True, errors='coerce')
-            df_dati = df_dati.dropna(subset=[col_t]).sort_values(col_t)
 
             # --- SELEZIONE UI ---
             st.subheader("🔍 Selezione Centraline e Sensori")
@@ -103,9 +111,9 @@ def run_plotter():
                 for d in sel_dl: sens_opts.extend(list(gerarchia[d].keys()))
                 sel_sens = st.multiselect("Seleziona Sensori", options=sorted(list(set(sens_opts))))
 
-            # --- FILTRO TEMPORALE DINAMICO ---
+            # --- FILTRO TEMPORALE ---
             st.write("---")
-            min_d, max_d = df_dati[col_t].min(), df_dati[col_t].max()
+            min_d, max_d = df_dati[col_t].min().date(), df_dati[col_t].max().date()
             t1, t2 = st.columns(2)
             with t1: start_dt = st.date_input("Inizio Analisi", min_d)
             with t2: end_dt = st.date_input("Fine Analisi", max_d)
@@ -120,48 +128,31 @@ def run_plotter():
                 mask = (df_dati[col_t].dt.date >= start_dt) & (df_dati[col_t].dt.date <= end_dt)
                 df_p = df_dati.loc[mask]
                 
-                fig = go.Figure()
-                report_stats = []
+                if df_p.empty:
+                    st.warning("Nessun dato presente nell'intervallo temporale selezionato.")
+                else:
+                    fig = go.Figure()
+                    report_stats = []
 
-                for col in final_cols:
-                    y_clean, diag = pulisci_dati(df_p[col], sigma_val, rimuovi_zeri)
-                    diag["Parametro"] = col
-                    report_stats.append(diag)
-                    fig.add_trace(go.Scatter(x=df_p[col_t], y=y_clean, name=col))
+                    for col in final_cols:
+                        y_clean, diag = pulisci_dati(df_p[col], sigma_val, rimuovi_zeri)
+                        diag["Parametro"] = col
+                        report_stats.append(diag)
+                        fig.add_trace(go.Scatter(x=df_p[col_t], y=y_clean, name=col, mode='lines+markers'))
 
-                # Grafico con range slider dinamico
-                fig.update_layout(
-                    height=600, template="plotly_white",
-                    xaxis=dict(rangeslider=dict(visible=True), type="date"),
-                    hovermode="x unified"
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                    fig.update_layout(
+                        height=600, template="plotly_white",
+                        xaxis=dict(rangeslider=dict(visible=True), type="date"),
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
-                # Report Qualità
-                st.subheader("📊 Report Analisi (Zeri e Gauss)")
-                st.table(pd.DataFrame(report_stats).set_index("Parametro"))
-
-                # Export TXT Ascisse
-                txt_data = df_p[col_t].dt.strftime('%d/%m/%Y %H:%M:%S').to_string(index=False)
-                st.download_button("💾 Scarica Ascisse (TXT)", txt_data, "ascisse.txt")
-
-                # Export Word
-                if st.button("📄 Esporta in Word") and WORD_OK:
-                    doc = Document()
-                    doc.add_heading('Report Monitoraggio DIMOS', 0)
-                    doc.add_paragraph(f"Periodo: {start_dt} - {end_dt}")
-                    table = doc.add_table(rows=1, cols=3)
-                    for i, h in enumerate(['Parametro', 'Zeri', 'Gauss']): table.rows[0].cells[i].text = h
-                    for r in report_stats:
-                        row = table.add_row().cells
-                        row[0].text, row[1].text, row[2].text = str(r['Parametro']), str(r['zeri']), str(r['gauss'])
-                    buf = BytesIO()
-                    doc.save(buf)
-                    st.download_button("Scarica Report .docx", buf.getvalue(), "Report.docx")
+                    st.subheader("📊 Report Analisi (Zeri e Gauss)")
+                    st.table(pd.DataFrame(report_stats).set_index("Parametro"))
 
         except Exception as e:
-            st.error(f"Errore nei dati: {e}")
+            st.error(f"Errore durante l'elaborazione: {e}")
 
-# Questa funzione permette ad app_DIMOS.py di chiamare il plotter
 if __name__ == "__main__":
+    import os
     run_plotter()
