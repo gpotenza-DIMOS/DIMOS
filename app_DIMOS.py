@@ -4,22 +4,55 @@ import os
 # 1. Configurazione 
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# 2. CSS (Mantenuto identico al tuo originale)
+# 2. CSS margini e layout (RIPRISTINATO ORIGINALE)
 st.markdown("""
     <style>
-        [data-testid="stSidebarContent"] { background-color: #1a1c23 !important; padding-top: 0px !important; }
-        [data-testid="stSidebarContent"] .stText, [data-testid="stSidebarContent"] label, 
-        [data-testid="stSidebarContent"] h1, [data-testid="stSidebarContent"] h2, 
-        [data-testid="stSidebarContent"] h3, [data-testid="stSidebarContent"] p { color: #e0e0e0 !important; }
-        .stButton > button {
-            width: 100%; border-radius: 0px; height: 60px; font-weight: bold;
-            text-transform: uppercase; border: 1px solid #444; background-color: #262730; color: white;
+        /* Sidebar scura e logo Microgeo in alto a sx senza spazi */
+        [data-testid="stSidebarContent"] {
+            background-color: #1a1c23 !important;
+            padding-top: 0px !important;
         }
-        .stButton > button:hover { border-color: #00ff00; color: #00ff00; }
+        
+        /* MODIFICA COLORI TESTO SIDEBAR: Grigio chiaro per leggibilità */
+        [data-testid="stSidebarContent"] .stText, 
+        [data-testid="stSidebarContent"] label, 
+        [data-testid="stSidebarContent"] h1, 
+        [data-testid="stSidebarContent"] h2, 
+        [data-testid="stSidebarContent"] h3, 
+        [data-testid="stSidebarContent"] p {
+            color: #e0e0e0 !important;
+        }
+        /* Colore specifico per i numeri/testo dentro i widget della sidebar */
+        [data-testid="stSidebarContent"] .stMarkdown {
+            color: #b8b8b8 !important;
+        }
+
+        .microgeo-header {
+            margin-top: -50px;
+            margin-left: -5px;
+        }
+
+        /* Pulsanti Sidebar: Rettangolari e Scritta Bianca */
+        .stButton > button {
+            width: 100%;
+            border-radius: 0px;
+            height: 60px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border: 1px solid #444;
+            background-color: #262730;
+            color: white;
+            transition: all 0.3s ease;
+        }
+        .stButton > button:hover {
+            border-color: #00ff00;
+            color: #00ff00;
+            background-color: #333;
+        }
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Sidebar di Navigazione
+# 3. Sidebar di Navigazione (IMPLEMENTATA SENZA CANCELLARE)
 with st.sidebar:
     if os.path.exists("logo_microgeo.png"):
         st.image("logo_microgeo.png", width=200)
@@ -33,7 +66,7 @@ with st.sidebar:
         st.session_state["page"] = "plotter"
         st.rerun()
 
-    if st.button("📍 MAPPA & STRUTTURE"): # NUOVO PULSANTE SIDEBAR
+    if st.button("📍 MAPPA & STRUTTURE"): # Implementazione aggiunta
         st.session_state["page"] = "map"
         st.rerun()
         
@@ -48,22 +81,25 @@ if pg == "home":
     st.title("Piattaforma Integrata DIMOS")
     st.divider()
 
-    # Logo e Immagine copertina
+    # --- ZONA IMMAGINI (ORIGINALE) ---
+    st.markdown("### Gestione e Analisi")
     col_img1, col_img2 = st.columns([1, 4])
     with col_img1:
-        if os.path.exists("logo_DIMOScircle.jpg"): st.image("logo_DIMOScircle.jpg", width=250)
+        if os.path.exists("logo_DIMOScircle.jpg"):
+            st.image("logo_DIMOScircle.jpg", width=250)
     with col_img2:
-        if os.path.exists("montita.jpg"): st.image("montita.jpg", width=400)
+        if os.path.exists("montita.jpg"):
+            st.image("montita.jpg", width=400)
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # GRIGLIA COMANDI (Aggiunto il terzo modulo)
-    c1, c2, c3 = st.columns(3) # Portato a 3 colonne
+    # --- ZONA COMANDI (IMPLEMENTATA A 3 COLONNE) ---
+    c1, c2, c3 = st.columns(3)
     
     with c1:
         with st.container(border=True):
             st.markdown("#### Modulo Elettrolivelle")
-            st.write("Calcolo cedimenti e analisi statistica.")
+            st.write("Calcolo cedimenti, Grafici e Analisi Statistica.")
             if st.button("Analisi ELETTROLIVELLE", key="btn_el"):
                 st.session_state["page"] = "el"
                 st.rerun()
@@ -71,21 +107,20 @@ if pg == "home":
     with c2:
         with st.container(border=True):
             st.markdown("#### Modulo Grafici")
-            st.write("Visualizzazione dati e generazione Report Word.")
+            st.write("Visualizzazione Dati e Reportistica Word.")
             if st.button("Analisi GRAFICA", key="btn_plotter"):
                 st.session_state["page"] = "plotter"
                 st.rerun()
 
-    with c3: # NUOVO RIQUADRO IN HOME
+    with c3: # Implementazione aggiunta
         with st.container(border=True):
             st.markdown("#### Mappa & Strutture")
-            st.write("Posizionamento sensori su GIS o Planimetrie.")
+            st.write("Posizionamento sensori su GIS o Foto.")
             if st.button("Apri MAPPA", key="btn_map"):
                 st.session_state["page"] = "map"
                 st.rerun()
 
-# --- LOGICA DI REINDIRIZZAMENTO AI MODULI ---
-
+# --- LOGICA REINDIRIZZAMENTO ---
 elif pg == "plotter":
     import plotter_mod
     plotter_mod.run_plotter()
@@ -94,17 +129,12 @@ elif pg == "el":
     import elettrolivelle_mod
     elettrolivelle_mod.run_elettrolivelle()
 
-elif pg == "map":
+elif pg == "map": # Nuova pagina implementata
     st.title("📍 Localizzazione Sensori")
-    tab1, tab2 = st.tabs(["🌍 Monitoraggio Territoriale (GIS)", "🏗️ Monitoraggio Strutturale (Foto)"])
-    
-    with tab1:
-        st.info("In questa sezione potrai visualizzare i sensori su mappa satellitare.")
-        # Qui richiameremo: map_module.render_territorial()
-        
-    with tab2:
-        st.info("In questa sezione potrai caricare una foto della struttura e posizionare i sensori.")
-        uploaded_map = st.file_uploader("Carica Planimetria o Foto Struttura", type=["jpg", "png", "jpeg"])
-        if uploaded_map:
-            st.image(uploaded_map, caption="Layout della struttura")
-            st.warning("Funzionalità di posizionamento punti in fase di configurazione.")
+    t1, t2 = st.tabs(["Mappa GIS", "Layout Strutturale"])
+    with t1:
+        st.info("Sezione per visualizzazione territoriale (Folium).")
+    with t2:
+        st.info("Sezione per caricamento foto e posizionamento manuale.")
+        up = st.file_uploader("Carica immagine struttura", type=["jpg","png"])
+        if up: st.image(up)
