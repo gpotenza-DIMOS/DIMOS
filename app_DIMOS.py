@@ -4,7 +4,7 @@ import os
 # 1. Configurazione 
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# 2. CSS margini e layout (ORIGINALE AL 100%)
+# 2. CSS margini e layout (ORIGINALE INTEGRALE)
 st.markdown("""
     <style>
         /* Sidebar scura e logo Microgeo in alto a sx senza spazi */
@@ -13,7 +13,7 @@ st.markdown("""
             padding-top: 0px !important;
         }
         
-        /* MODIFICA COLORI TESTO SIDEBAR */
+        /* MODIFICA COLORI TESTO SIDEBAR: Grigio chiaro per leggibilità */
         [data-testid="stSidebarContent"] .stText, 
         [data-testid="stSidebarContent"] label, 
         [data-testid="stSidebarContent"] h1, 
@@ -22,6 +22,7 @@ st.markdown("""
         [data-testid="stSidebarContent"] p {
             color: #e0e0e0 !important;
         }
+        /* Colore specifico per i numeri/testo dentro i widget della sidebar */
         [data-testid="stSidebarContent"] .stMarkdown {
             color: #b8b8b8 !important;
         }
@@ -31,7 +32,7 @@ st.markdown("""
             margin-left: -5px;
         }
 
-        /* Pulsanti Sidebar: Rettangolari */
+        /* Pulsanti Sidebar: Rettangolari e Scritta Bianca */
         .stButton > button {
             width: 100%;
             border-radius: 0px;
@@ -51,16 +52,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Sidebar di Navigazione (RIPRISTINATO LOGO CON CLASSE CSS ORIGINALE)
+# 3. Sidebar di Navigazione
 with st.sidebar:
-    # Logo superiore con posizionamento negativo (come nel tuo originale)
-    with st.container():
-        st.markdown('<div class="microgeo-header">', unsafe_allow_html=True)
-        if os.path.exists("logo_microgeo.png"):
-            st.image("logo_microgeo.png", width=200)
-        elif os.path.exists("logo_microgeo.jpg"): # Controllo estensione
-            st.image("logo_microgeo.jpg", width=200)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # --- LOGO GRANDE POSIZIONATO IN ALTO (ORIGINALE) ---
+    st.markdown('<div class="microgeo-header">', unsafe_allow_html=True)
+    if os.path.exists("logo_microgeo.jpg"):
+        st.image("logo_microgeo.jpg", use_container_width=True)
+    elif os.path.exists("logo_microgeo.png"):
+        st.image("logo_microgeo.png", use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("### NAVIGAZIONE")
     if st.button("🏠 HOME"):
@@ -71,7 +71,7 @@ with st.sidebar:
         st.session_state["page"] = "plotter"
         st.rerun()
 
-    if st.button("📍 MAPPA & STRUTTURE"): # AGGIUNTA
+    if st.button("📍 MAPPA & STRUTTURE"):
         st.session_state["page"] = "map"
         st.rerun()
         
@@ -117,7 +117,7 @@ if pg == "home":
                 st.session_state["page"] = "plotter"
                 st.rerun()
 
-    with c3: # AGGIUNTA
+    with c3:
         with st.container(border=True):
             st.markdown("#### Mappa & Strutture")
             st.write("Posizionamento sensori su GIS o Foto.")
@@ -125,7 +125,7 @@ if pg == "home":
                 st.session_state["page"] = "map"
                 st.rerun()
 
-    # --- FOOTER E CONTATTI ---
+    # --- FOOTER ---
     st.divider()
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
@@ -141,10 +141,10 @@ if pg == "home":
         st.markdown("[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/company/microgeo-srl/)")
         st.markdown("[![YouTube](https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/user/MicrogeoSrl)")
 
-    if os.path.exists("logo_microgeo.png"):
-        st.image("logo_microgeo.png", width=150)
-    elif os.path.exists("logo_microgeo.jpg"):
+    if os.path.exists("logo_microgeo.jpg"):
         st.image("logo_microgeo.jpg", width=150)
+    elif os.path.exists("logo_microgeo.png"):
+        st.image("logo_microgeo.png", width=150)
 
 # --- LOGICA REINDIRIZZAMENTO ---
 elif pg == "plotter":
@@ -157,10 +157,10 @@ elif pg == "el":
 
 elif pg == "map":
     st.title("📍 Localizzazione Sensori")
-    t1, t2 = st.tabs(["🌍 Mappa GIS", "🏗️ Layout Strutturale"])
+    t1, t2 = st.tabs(["Mappa GIS", "Layout Strutturale"])
     with t1:
-        st.info("In questa sezione implementeremo la visualizzazione territoriale.")
+        st.info("Visualizzazione territoriale.")
     with t2:
-        st.info("Carica una foto per posizionare i sensori sulla struttura.")
+        st.info("Posizionamento sensori su immagine struttura.")
         up = st.file_uploader("Carica immagine", type=["jpg","png"])
         if up: st.image(up)
