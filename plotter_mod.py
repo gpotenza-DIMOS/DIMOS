@@ -89,7 +89,7 @@ def run_plotter():
             if sens not in gerarchia[dl]: gerarchia[dl][sens] = {}
             gerarchia[dl][sens][param] = col
 
-        # --- VISUALIZZAZIONE ---
+        # --- SEZIONE VISUALIZZAZIONE ---
         st.subheader("📊 Visualizzazione Grafica")
         cv1, cv2, cv3 = st.columns(3)
         with cv1: sel_dl_v = st.multiselect("Datalogger", sorted(gerarchia.keys()), key="v1")
@@ -123,7 +123,7 @@ def run_plotter():
             fig.update_layout(height=600, template="plotly_white", xaxis=dict(rangeslider=dict(visible=True)))
             st.plotly_chart(fig, use_container_width=True)
 
-        # --- STAMPA WORD CON GRAFICI ---
+        # --- SEZIONE STAMPA WORD (CON FIX GRAFICI) ---
         st.divider()
         st.subheader("📄 Report Word con Grafici")
         with st.container(border=True):
@@ -140,20 +140,20 @@ def run_plotter():
                 doc = Document()
                 doc.add_heading('Report Monitoraggio DIMOS', 0)
                 
-                with st.spinner("Generazione grafici per il documento..."):
+                with st.spinner("Acquisizione immagini per il report..."):
                     for d in sel_dl_w:
                         doc.add_heading(f'Centralina: {d}', level=1)
                         for s in sel_sens_w:
                             if s in gerarchia[d]:
-                                p_list = [p for p in sel_params_w if p in gerarchia[d][s]]
-                                if p_list:
+                                p_finali = [p for p in sel_params_w if p in gerarchia[d][s]]
+                                if p_finali:
                                     doc.add_heading(f'Sensore: {s}', level=2)
-                                    for p in p_list:
+                                    for p in p_finali:
                                         y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
                                         doc.add_paragraph(f"Grandezza: {p}")
                                         doc.add_paragraph(f"Analisi: Zeri rimossi: {diag['zeri']} | Outliers Gauss: {diag['gauss']}")
                                         
-                                        # GRAFICO SPECIFICO PER WORD
+                                        # CREAZIONE GRAFICO PER WORD
                                         fig_w = go.Figure()
                                         fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=y_c, name=p, line=dict(color="#1f77b4", width=1.5)))
                                         
@@ -163,30 +163,24 @@ def run_plotter():
                                                 x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
                                                 poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
                                                 fig_w.add_trace(go.Scatter(
-                                                    x=df_dati[col_t], 
-                                                    y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
-                                                    name="Trend", 
-                                                    line=dict(color="red", width=2, dash='dash'),
-                                                    opacity=0.9
-                                                ))
+                                                    x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
+                                                    line=dict(color="red", width=2.5, dash='dash'), opacity=0.9))
                                         
-                                        fig_w.update_layout(
-                                            title=f"{s} - {p}",
-                                            width=800, height=400, 
-                                            margin=dict(l=40, r=40, t=40, b=40), 
-                                            template="plotly_white"
-                                        )
+                                        fig_w.update_layout(title=f"{s} - {p}", width=900, height=500, template="plotly_white")
                                         
-                                        # Trasformazione in immagine (Richiede Kaleido)
+                                        # TENTATIVO DI ESPORTAZIONE IMMAGINE
                                         try:
+                                            # Tentativo standard con kaleido
                                             img_bytes = fig_w.to_image(format="png", engine="kaleido")
-                                            doc.add_picture(BytesIO(img_bytes), width=Inches(5.8))
+                                            doc.add_picture(BytesIO(img_bytes), width=Inches(6))
                                         except Exception as e:
-                                            doc.add_paragraph(f"[Errore generazione grafico: installare 'kaleido']")
+                                            # Se fallisce, scriviamo l'errore nel documento per diagnostica
+                                            doc.add_paragraph(f"⚠️ Errore rendering grafico: {e}")
+                                            st.error(f"Errore tecnico per {s}-{p}: {e}")
 
                 buf = BytesIO()
                 doc.save(buf)
-                st.download_button("⬇️ Scarica Report con Grafici", buf.getvalue(), "Report_DIMOS_Completo.docx")
+                st.download_button("⬇️ Scarica Report Finale", buf.getvalue(), "Report_DIMOS_Completo.docx")
 
 if __name__ == "__main__":
     run_plotter()
