@@ -4,16 +4,14 @@ import os
 # 1. Configurazione 
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# 2. CSS margini e layout (ORIGINALE INTEGRALE)
+# 2. CSS INTEGRALE (Animazioni originali + Fix Layout Immagine)
 st.markdown("""
     <style>
-        /* Sidebar scura e logo Microgeo in alto a sx senza spazi */
         [data-testid="stSidebarContent"] {
             background-color: #1a1c23 !important;
             padding-top: 0px !important;
         }
         
-        /* MODIFICA COLORI TESTO SIDEBAR: Grigio chiaro per leggibilità */
         [data-testid="stSidebarContent"] .stText, 
         [data-testid="stSidebarContent"] label, 
         [data-testid="stSidebarContent"] h1, 
@@ -22,39 +20,43 @@ st.markdown("""
         [data-testid="stSidebarContent"] p {
             color: #e0e0e0 !important;
         }
-        /* Colore specifico per i numeri/testo dentro i widget della sidebar */
-        [data-testid="stSidebarContent"] .stMarkdown {
-            color: #b8b8b8 !important;
-        }
 
         .microgeo-header {
             margin-top: -50px;
             margin-left: -5px;
         }
 
-        /* Pulsanti Sidebar: Rettangolari e Scritta Bianca */
-        .stButton > button {
+        /* PULSANTI: Ripristino animazione e stile originale */
+        div.stButton > button {
             width: 100%;
             border-radius: 0px;
             height: 60px;
             font-weight: bold;
             text-transform: uppercase;
-            border: 1px solid #444;
-            background-color: #262730;
-            color: white;
-            transition: all 0.3s ease;
+            border: 1px solid #444 !important;
+            background-color: #262730 !important;
+            color: white !important;
+            transition: all 0.3s ease-in-out !important;
         }
-        .stButton > button:hover {
-            border-color: #00ff00;
-            color: #00ff00;
-            background-color: #333;
+        
+        div.stButton > button:hover {
+            border-color: #00ff00 !important;
+            color: #00ff00 !important;
+            background-color: #333 !important;
+            transform: scale(1.02);
+        }
+
+        /* FIX IMMAGINE: Impedisce l'espansione verticale eccessiva */
+        .stImage > img {
+            max-height: 450px;
+            width: auto;
+            object-fit: contain;
         }
     </style>
 """, unsafe_allow_html=True)
 
 # 3. Sidebar di Navigazione
 with st.sidebar:
-    # --- LOGO GRANDE POSIZIONATO IN ALTO (ORIGINALE) ---
     st.markdown('<div class="microgeo-header">', unsafe_allow_html=True)
     if os.path.exists("logo_microgeo.jpg"):
         st.image("logo_microgeo.jpg", use_container_width=True)
@@ -71,7 +73,7 @@ with st.sidebar:
         st.session_state["page"] = "plotter"
         st.rerun()
 
-    if st.button("📍 MAPPA & STRUTTURE"): # AGGIUNTA
+    if st.button("📍 MAPPA & STRUTTURE"):
         st.session_state["page"] = "map"
         st.rerun()
         
@@ -86,7 +88,6 @@ if pg == "home":
     st.title("Piattaforma Integrata DIMOS")
     st.divider()
 
-    # --- ZONA IMMAGINI (ESTERNE AI RIQUADRI - ORIGINALE) ---
     st.markdown("### Gestione e Analisi")
     col_img1, col_img2 = st.columns([1, 4])
     with col_img1:
@@ -98,9 +99,7 @@ if pg == "home":
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- ZONA COMANDI (IMPLEMENTAZIONE A 3 COLONNE) ---
     c1, c2, c3 = st.columns(3)
-    
     with c1:
         with st.container(border=True):
             st.markdown("#### Modulo Elettrolivelle")
@@ -108,7 +107,6 @@ if pg == "home":
             if st.button("Analisi ELETTROLIVELLE", key="btn_el"):
                 st.session_state["page"] = "el"
                 st.rerun()
-
     with c2:
         with st.container(border=True):
             st.markdown("#### Modulo Grafici")
@@ -116,8 +114,7 @@ if pg == "home":
             if st.button("Analisi GRAFICA", key="btn_plotter"):
                 st.session_state["page"] = "plotter"
                 st.rerun()
-
-    with c3: # NUOVO MODULO MAPPA
+    with c3:
         with st.container(border=True):
             st.markdown("#### Mappa & Strutture")
             st.write("Posizionamento sensori su GIS o Foto.")
@@ -125,14 +122,14 @@ if pg == "home":
                 st.session_state["page"] = "map"
                 st.rerun()
 
-    # --- FOOTER E CONTATTI (ORIGINALE AL 100%) ---
+    # FOOTER CON DATI SOCIETÀ AGGIORNATI
     st.divider()
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
-        st.markdown("""
+        st.markdown(f"""
             ### Contatti e Supporto
-            **Microgeo S.r.l.** 📍 Via San Quirico, 306/A, 50013 Campi Bisenzio
-            📞 +39 055 895 4766
+            **Microgeo S.r.l.** 📍 Via San Quirico, 306/A, 50013 Campi Bisenzio (FI)  
+            📞 +39 055 895 4766  
             📧 [info@microgeo.it](mailto:info@microgeo.it)  
             🌐 [www.microgeo.it](https://www.microgeo.it)
         """)
@@ -143,18 +140,14 @@ if pg == "home":
 
     if os.path.exists("logo_microgeo.jpg"):
         st.image("logo_microgeo.jpg", width=150)
-    elif os.path.exists("logo_microgeo.png"):
-        st.image("logo_microgeo.png", width=150)
 
-# --- LOGICA REINDIRIZZAMENTO ---
+# LOGICA PAGINE
 elif pg == "plotter":
     import plotter_mod
     plotter_mod.run_plotter()
-
 elif pg == "el":
     import elettrolivelle_mod
     elettrolivelle_mod.run_elettrolivelle()
-
 elif pg == "map":
     import map_module
     map_module.run_map_manager()
