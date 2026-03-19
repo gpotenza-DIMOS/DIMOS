@@ -140,7 +140,7 @@ def run_plotter():
                 doc = Document()
                 doc.add_heading('Report Monitoraggio DIMOS', 0)
                 
-                with st.spinner("Generazione grafici in corso..."):
+                with st.spinner("Generazione grafici per il documento..."):
                     for d in sel_dl_w:
                         doc.add_heading(f'Centralina: {d}', level=1)
                         for s in sel_sens_w:
@@ -150,26 +150,43 @@ def run_plotter():
                                     doc.add_heading(f'Sensore: {s}', level=2)
                                     for p in p_list:
                                         y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
-                                        doc.add_paragraph(f"Grandezza: {p} | Zeri: {diag['zeri']} | Gauss: {diag['gauss']}")
+                                        doc.add_paragraph(f"Grandezza: {p}")
+                                        doc.add_paragraph(f"Analisi: Zeri rimossi: {diag['zeri']} | Outliers Gauss: {diag['gauss']}")
                                         
-                                        # CREAZIONE MINI-GRAFICO PER WORD
+                                        # GRAFICO SPECIFICO PER WORD
                                         fig_w = go.Figure()
-                                        fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=y_c, name=p, line=dict(color="#1f77b4")))
+                                        fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=y_c, name=p, line=dict(color="#1f77b4", width=1.5)))
+                                        
                                         if show_trend:
                                             v_idx = y_c.notna()
                                             if v_idx.sum() > 4:
                                                 x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
                                                 poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
-                                                fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
-                                                                         line=dict(color="red", width=2, dash='dash')))
+                                                fig_w.add_trace(go.Scatter(
+                                                    x=df_dati[col_t], 
+                                                    y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
+                                                    name="Trend", 
+                                                    line=dict(color="red", width=2, dash='dash'),
+                                                    opacity=0.9
+                                                ))
                                         
-                                        fig_w.update_layout(width=700, height=350, margin=dict(l=20, r=20, t=20, b=20), template="plotly_white")
-                                        img_bytes = fig_w.to_image(format="png")
-                                        doc.add_picture(BytesIO(img_bytes), width=Inches(6))
-                
+                                        fig_w.update_layout(
+                                            title=f"{s} - {p}",
+                                            width=800, height=400, 
+                                            margin=dict(l=40, r=40, t=40, b=40), 
+                                            template="plotly_white"
+                                        )
+                                        
+                                        # Trasformazione in immagine (Richiede Kaleido)
+                                        try:
+                                            img_bytes = fig_w.to_image(format="png", engine="kaleido")
+                                            doc.add_picture(BytesIO(img_bytes), width=Inches(5.8))
+                                        except Exception as e:
+                                            doc.add_paragraph(f"[Errore generazione grafico: installare 'kaleido']")
+
                 buf = BytesIO()
                 doc.save(buf)
-                st.download_button("⬇️ Scarica Report con Grafici", buf.getvalue(), "Report_DIMOS.docx")
+                st.download_button("⬇️ Scarica Report con Grafici", buf.getvalue(), "Report_DIMOS_Completo.docx")
 
 if __name__ == "__main__":
     run_plotter()
