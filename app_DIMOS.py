@@ -22,7 +22,7 @@ def check_password():
         user = st.text_input("Username")
         password = st.text_input("Password", type="password")
         if st.button("ACCEDI"):
-            if user == "admin" and password == "dimos2026":
+            if user == "asdf" and password == "asdf":
                 st.session_state["authenticated"] = True
                 st.rerun()
             else:
