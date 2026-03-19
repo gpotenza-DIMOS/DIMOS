@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from io import BytesIO
 
-# --- GESTIONE LIBRERIE STAMPA (Invariate) ---
+# --- GESTIONE LIBRERIE STAMPA  ---
 try:
     from docx import Document
     from docx.shared import Inches
@@ -33,7 +33,7 @@ def carica_file_cache(uploaded_file):
     df_dati = df_dati.dropna(subset=[col_t]).sort_values(col_t)
     return df_dati, df_name
 
-# --- MOTORE PULIZIA E PARSING (Invariato e Completo) ---
+# --- MOTORE PULIZIA E PARSING ---
 def pulisci_dati(serie, n_sigma, drop_zeros):
     originale = serie.copy()
     diag = {"zeri": 0, "gauss": 0}
@@ -137,13 +137,13 @@ def run_plotter():
                                         x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
                                         poly = np.poly1d(np.polyfit(x_ts, y_v[v_idx], 3))
                                         fig.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
-                                            name=f"Trend {s}-{p}", line=dict(color=color, width=2, dash='dash'), opacity=0.4))
+                                            name=f"Trend {s}-{p}", line=dict(color=color, width=2.5, dash='dash'), opacity=0.8))
 
             fig.update_layout(height=650, template="plotly_white", xaxis=dict(rangeslider=dict(visible=True)), hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
             st.table(pd.DataFrame(report_stats).set_index("Parametro"))
 
-        # --- SEZIONE STAMPA WORD (Stessa Logica 3 Livelli) ---
+        # --- SEZIONE STAMPA WORD ( Logica 3 Livelli) ---
         st.divider()
         st.subheader("📄 Configurazione Stampa Word")
         with st.container(border=True):
