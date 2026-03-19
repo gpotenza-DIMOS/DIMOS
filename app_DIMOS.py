@@ -4,7 +4,7 @@ import os
 # 1. Configurazione 
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# 2. CSS margini e layout (ORIGINALE INTEGRALE CON LOGOUT E ANIMAZIONI)
+# 2. CSS margini e layout (RIPRISTINATO ORIGINALE INTEGRALE)
 st.markdown("""
     <style>
         /* Sidebar scura e logo Microgeo in alto a sx senza spazi */
@@ -13,7 +13,7 @@ st.markdown("""
             padding-top: 0px !important;
         }
         
-        /* MODIFICA COLORI TESTO SIDEBAR */
+        /* MODIFICA COLORI TESTO SIDEBAR: Grigio chiaro per leggibilità */
         [data-testid="stSidebarContent"] .stText, 
         [data-testid="stSidebarContent"] label, 
         [data-testid="stSidebarContent"] h1, 
@@ -22,6 +22,7 @@ st.markdown("""
         [data-testid="stSidebarContent"] p {
             color: #e0e0e0 !important;
         }
+        /* Colore specifico per i numeri/testo dentro i widget della sidebar */
         [data-testid="stSidebarContent"] .stMarkdown {
             color: #b8b8b8 !important;
         }
@@ -31,31 +32,26 @@ st.markdown("""
             margin-left: -5px;
         }
 
-        /* Pulsanti Sidebar: Rettangolari */
-        .stButton > button {
+        /* Pulsanti Sidebar e Home: RIPRISTINO ANIMAZIONE ORIGINALE */
+        div.stButton > button {
             width: 100%;
             border-radius: 0px;
             height: 60px;
             font-weight: bold;
             text-transform: uppercase;
-            border: 1px solid #444;
-            background-color: #262730;
-            color: white;
-            transition: all 0.3s ease;
-        }
-        .stButton > button:hover {
-            border-color: #00ff00;
-            color: #00ff00;
-        }
-
-        /* LOGOUT BUTTON SPECIFICO */
-        .logout-button > button {
-            height: 40px !important;
-            background-color: #442222 !important;
-            margin-top: 20px;
+            border: 1px solid #444 !important;
+            background-color: #262730 !important;
+            color: white !important;
+            transition: all 0.3s ease !important; /* L'animazione fluida */
         }
         
-        /* FIX LAYOUT IMMAGINE MAPPA */
+        div.stButton > button:hover {
+            border-color: #00ff00 !important;
+            color: #00ff00 !important;
+            background-color: #333 !important;
+        }
+
+        /* FIX LAYOUT IMMAGINE MAPPA PER EVITARE ESPLOSIONI VERTICALI */
         .stImage > img {
             max-height: 450px;
             object-fit: contain;
@@ -63,11 +59,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Sidebar di Navigazione (RIPRISTINATA AL 100%)
+# 3. Sidebar di Navigazione
 with st.sidebar:
+    # Logo superiore con classe originale
     st.markdown('<div class="microgeo-header">', unsafe_allow_html=True)
     if os.path.exists("logo_microgeo.jpg"):
         st.image("logo_microgeo.jpg", use_container_width=True)
+    elif os.path.exists("logo_microgeo.png"):
+        st.image("logo_microgeo.png", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("### NAVIGAZIONE")
@@ -79,7 +78,7 @@ with st.sidebar:
         st.session_state["page"] = "plotter"
         st.rerun()
 
-    if st.button("📍 MAPPA & STRUTTURE"): # AGGIUNTO
+    if st.button("📍 MAPPA & STRUTTURE"):
         st.session_state["page"] = "map"
         st.rerun()
         
@@ -88,7 +87,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    # PULSANTE LOGOUT (RIPRISTINATO)
+    # PULSANTE LOGOUT ORIGINALE
     if st.button("🚪 LOGOUT", key="logout_sidebar"):
         st.session_state["authenticated"] = False
         st.rerun()
@@ -111,7 +110,7 @@ if pg == "home":
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # GRIGLIA A 3 COLONNE (RIPRISTINATA E AGGIUNTA MAPPA)
+    # GRIGLIA A 3 COLONNE
     c1, c2, c3 = st.columns(3)
     
     with c1:
@@ -138,7 +137,7 @@ if pg == "home":
                 st.session_state["page"] = "map"
                 st.rerun()
 
-    # FOOTER ORIGINALE CON DATI CORRETTI
+    # FOOTER CON DATI CORRETTI
     st.divider()
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
@@ -157,7 +156,7 @@ if pg == "home":
     if os.path.exists("logo_microgeo.jpg"):
         st.image("logo_microgeo.jpg", width=150)
 
-# REINDIRIZZAMENTO
+# REINDIRIZZAMENTO AI MODULI
 elif pg == "plotter":
     import plotter_mod
     plotter_mod.run_plotter()
