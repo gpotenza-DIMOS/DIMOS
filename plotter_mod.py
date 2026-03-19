@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 import os
 import re
 from datetime import datetime
 from io import BytesIO
 
-# --- GESTIONE LIBRERIE STAMPA ---
+# --- GESTIONE LIBRERIA STAMPA ---
 try:
     from docx import Document
     from docx.shared import Inches
@@ -15,7 +16,7 @@ try:
 except ImportError:
     WORD_OK = False
 
-# --- CACHE DATI ---
+# --- FUNZIONI DI CALCOLO (Invariate) ---
 @st.cache_data(show_spinner=False)
 def carica_file_cache(uploaded_file):
     df_name = None
@@ -54,7 +55,7 @@ def parse_column_info(col_name, df_name=None, col_index=None):
         try:
             dl = str(df_name.iloc[0, col_index]).strip()
             sens = str(df_name.iloc[1, col_index]).strip()
-            web_info = str(df_name.iloc[2, col_index]).strip() if len(df_name) > 2 else col_name
+            web_info = str(df_name.iloc[2, col_index]).strip()
             unit_m = re.search(r'\[(.*?)\]', web_info)
             unit = f" [{unit_m.group(1)}]" if unit_m else ""
             p_match = re.search(r'_(X|Y|Z|T1|T2|LI|LQ|LM|VAR\d+)', web_info)
@@ -67,14 +68,12 @@ def run_plotter():
     if os.path.exists("logo_dimos.jpg"):
         st.image("logo_dimos.jpg", width=400)
     st.markdown("# Dati Monitoraggio - Visualizzazione e stampa")
-    st.divider()
 
     with st.sidebar:
         st.header("⚙️ Parametri Tecnici")
         sigma_val = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0)
         rimuovi_zeri = st.checkbox("Elimina letture a '0'", value=True)
         show_trend = st.checkbox("Mostra Linea di Tendenza (3° grado)", value=True)
-        st.divider()
 
     uploaded_file = st.file_uploader("📂 Carica file Excel o CSV", type=['xlsx', 'xlsm', 'csv'])
 
@@ -89,7 +88,7 @@ def run_plotter():
             if sens not in gerarchia[dl]: gerarchia[dl][sens] = {}
             gerarchia[dl][sens][param] = col
 
-        # --- VISUALIZZAZIONE A SCHERMO ---
+        # --- PARTE 1: VISUALIZZAZIONE INTERATTIVA ---
         st.subheader("📊 Visualizzazione Grafica")
         cv1, cv2, cv3 = st.columns(3)
         with cv1: sel_dl_v = st.multiselect("Datalogger", sorted(gerarchia.keys()), key="v1")
@@ -102,80 +101,70 @@ def run_plotter():
 
         if sel_params_v:
             fig = go.Figure()
-            colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
-            count = 0
             for d in sel_dl_v:
                 for s in sel_sens_v:
                     if s in gerarchia[d]:
                         for p in sel_params_v:
                             if p in gerarchia[d][s]:
                                 y_v, _ = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
-                                color = colors[count % len(colors)]
-                                fig.add_trace(go.Scatter(x=df_dati[col_t], y=y_v, name=f"{s}-{p}", line=dict(color=color, width=1.3)))
+                                fig.add_trace(go.Scatter(x=df_dati[col_t], y=y_v, name=f"{s}-{p}"))
                                 if show_trend:
                                     v_idx = y_v.notna()
                                     if v_idx.sum() > 4:
                                         x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
                                         poly = np.poly1d(np.polyfit(x_ts, y_v[v_idx], 3))
                                         fig.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
-                                            name=f"Trend {s}-{p}", line=dict(color=color, width=2.5, dash='dash'), opacity=0.9))
-                                count += 1
-            fig.update_layout(height=600, template="plotly_white", xaxis=dict(rangeslider=dict(visible=True)))
+                                            name=f"Trend {s}", line=dict(color="red", width=2, dash='dash')))
             st.plotly_chart(fig, use_container_width=True)
 
-        # --- REPORT WORD ---
+        # --- PARTE 2: STAMPA WORD (SENZA KALEIDO) ---
         st.divider()
-        st.subheader("📄 Report Word con Grafici")
-        with st.container(border=True):
-            cw1, cw2, cw3 = st.columns(3)
-            with cw1: sel_dl_w = st.multiselect("Datalogger (Stampa)", sorted(gerarchia.keys()), key="w1")
-            with cw2:
-                s_opts_w = sorted(list(set([s for d in sel_dl_w for s in gerarchia[d].keys()])))
-                sel_sens_w = st.multiselect("Sensori (Stampa)", s_opts_w, key="w2")
-            with cw3:
-                p_opts_w = sorted(list(set([p for d in sel_dl_w for s in sel_sens_w if s in gerarchia[d] for p in gerarchia[d][s].keys()])))
-                sel_params_w = st.multiselect("Grandezze (Stampa)", p_opts_w, key="w3")
+        st.subheader("📄 Generazione Report")
+        cw1, cw2, cw3 = st.columns(3)
+        with cw1: sel_dl_w = st.multiselect("Datalogger (Report)", sorted(gerarchia.keys()), key="w1")
+        with cw2:
+            s_opts_w = sorted(list(set([s for d in sel_dl_w for s in gerarchia[d].keys()])))
+            sel_sens_w = st.multiselect("Sensori (Report)", s_opts_w, key="w2")
+        with cw3:
+            p_opts_w = sorted(list(set([p for d in sel_dl_w for s in sel_sens_w if s in gerarchia[d] for p in gerarchia[d][s].keys()])))
+            sel_params_w = st.multiselect("Grandezze (Report)", p_opts_w, key="w3")
 
-            if st.button("🚀 Genera Report Word Completo") and WORD_OK:
-                doc = Document()
-                doc.add_heading('Report Monitoraggio DIMOS', 0)
-                
-                with st.spinner("Elaborazione grafici..."):
-                    for d in sel_dl_w:
-                        doc.add_heading(f'Centralina: {d}', level=1)
-                        for s in sel_sens_w:
-                            if s in gerarchia[d]:
-                                p_list = [p for p in sel_params_w if p in gerarchia[d][s]]
-                                if p_list:
-                                    doc.add_heading(f'Sensore: {s}', level=2)
-                                    for p in p_list:
-                                        y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
-                                        doc.add_paragraph(f"Grandezza: {p} | Zeri: {diag['zeri']} | Gauss: {diag['gauss']}")
-                                        
-                                        fig_w = go.Figure()
-                                        fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=y_c, line=dict(color="#1f77b4", width=1.5)))
-                                        if show_trend:
-                                            v_idx = y_c.notna()
-                                            if v_idx.sum() > 4:
-                                                x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
-                                                poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
-                                                fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
-                                                    line=dict(color="red", width=2.5, dash='dash')))
-                                        
-                                        fig_w.update_layout(width=700, height=350, template="plotly_white", showlegend=False)
-                                        
-                                        try:
-                                            # Salvataggio temporaneo per evitare bug di Kaleido su alcuni PC
-                                            temp_img = f"temp_{d}_{s}_{p}.png".replace(" ","_").replace("/","_")
-                                            fig_w.write_image(temp_img, engine="kaleido")
-                                            doc.add_picture(temp_img, width=Inches(6))
-                                            os.remove(temp_img) # Pulizia
-                                        except:
-                                            doc.add_paragraph("⚠️ Errore rendering grafico.")
-
-                buf = BytesIO()
-                doc.save(buf)
-                st.download_button("⬇️ Scarica Report", buf.getvalue(), "Report_DIMOS.docx")
+        if st.button("🚀 Crea Report Word") and WORD_OK:
+            doc = Document()
+            doc.add_heading('Report Monitoraggio DIMOS', 0)
+            
+            for d in sel_dl_w:
+                doc.add_heading(f'Centralina: {d}', level=1)
+                for s in sel_sens_w:
+                    if s in gerarchia[d]:
+                        for p in sel_params_w:
+                            if p in gerarchia[d][s]:
+                                y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
+                                doc.add_heading(f'Sensore: {s} - {p}', level=2)
+                                doc.add_paragraph(f"Filtri: Zeri rimossi: {diag['zeri']} | Outliers: {diag['gauss']}")
+                                
+                                # Creazione grafico con Matplotlib (Stabile al 100%)
+                                plt.figure(figsize=(8, 4))
+                                plt.plot(df_dati[col_t], y_c, label=p, color='#1f77b4', linewidth=1)
+                                if show_trend:
+                                    v_idx = y_c.notna()
+                                    if v_idx.sum() > 4:
+                                        x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
+                                        poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
+                                        plt.plot(df_dati[col_t], poly(df_dati[col_t].apply(lambda x: x.timestamp())), 
+                                                 color='red', linestyle='--', label='Trend')
+                                plt.title(f"{s} - {p}")
+                                plt.grid(True, alpha=0.3)
+                                plt.legend()
+                                
+                                img_stream = BytesIO()
+                                plt.savefig(img_stream, format='png', bbox_inches='tight')
+                                plt.close()
+                                doc.add_picture(img_stream, width=Inches(5.8))
+            
+            target = BytesIO()
+            doc.save(target)
+            st.download_button("⬇️ Scarica Documento", target.getvalue(), "Report_DIMOS.docx")
 
 if __name__ == "__main__":
     run_plotter()
