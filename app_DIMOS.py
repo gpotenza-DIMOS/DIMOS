@@ -52,8 +52,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Sidebar di Navigazione
+# 3. Sidebar di Navigazione (CON LOGO RIPRISTINATO)
 with st.sidebar:
+    # Logo Microgeo in alto (Header Sidebar)
     if os.path.exists("logo_microgeo.png"):
         st.image("logo_microgeo.png", width=200)
     
@@ -66,7 +67,7 @@ with st.sidebar:
         st.session_state["page"] = "plotter"
         st.rerun()
 
-    if st.button("📍 MAPPA & STRUTTURE"): # AGGIUNTO
+    if st.button("📍 MAPPA & STRUTTURE"): # AGGIUNTA
         st.session_state["page"] = "map"
         st.rerun()
         
@@ -93,7 +94,7 @@ if pg == "home":
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- ZONA COMANDI (RIQUADRI SEPARATI) - AGGIUNTA TERZA COLONNA ---
+    # --- ZONA COMANDI (TRE COLONNE) ---
     c1, c2, c3 = st.columns(3)
     
     with c1:
@@ -112,7 +113,7 @@ if pg == "home":
                 st.session_state["page"] = "plotter"
                 st.rerun()
 
-    with c3: # AGGIUNTO
+    with c3: # AGGIUNTA
         with st.container(border=True):
             st.markdown("#### Mappa & Strutture")
             st.write("Posizionamento sensori su GIS o Foto.")
@@ -120,15 +121,15 @@ if pg == "home":
                 st.session_state["page"] = "map"
                 st.rerun()
 
-    # --- SEZIONE INFO E LOGHI FOOTER (RIPRISTINATA INTEGRALMENTE) ---
+    # --- FOOTER E CONTATTI (ORIGINALE) ---
     st.divider()
     col_f1, col_f2 = st.columns([2, 1])
     
     with col_f1:
         st.markdown("""
             ### Contatti e Supporto
-            **Microgeo S.r.l.** 📍 Via San Quirico, 306/A, 50013 Campi Bisenzio FI  
-            📞 +39 055 895 4766  
+            **Microgeo S.r.l.** 📍 Via de' Barucci 4, 50127 Firenze (FI)  
+            📞 +39 055 4220471  
             📧 [info@microgeo.it](mailto:info@microgeo.it)  
             🌐 [www.microgeo.it](https://www.microgeo.it)
         """)
@@ -138,6 +139,7 @@ if pg == "home":
         st.markdown("[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/company/microgeo-srl/)")
         st.markdown("[![YouTube](https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/user/MicrogeoSrl)")
 
+    # Logo Microgeo a fondo pagina (Footer)
     if os.path.exists("logo_microgeo.png"):
         st.image("logo_microgeo.png", width=150)
 
@@ -150,7 +152,7 @@ elif pg == "el":
     import elettrolivelle_mod
     elettrolivelle_mod.run_elettrolivelle()
 
-elif pg == "map": # NUOVA PAGINA
+elif pg == "map":
     st.title("📍 Localizzazione Sensori")
     t1, t2 = st.tabs(["Mappa GIS", "Layout Strutturale"])
     with t1:
