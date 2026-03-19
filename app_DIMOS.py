@@ -12,6 +12,21 @@ st.markdown("""
             background-color: #1a1c23 !important;
             padding-top: 0px !important;
         }
+        
+        /* MODIFICA COLORI TESTO SIDEBAR: Grigio chiaro per leggibilità */
+        [data-testid="stSidebarContent"] .stText, 
+        [data-testid="stSidebarContent"] label, 
+        [data-testid="stSidebarContent"] h1, 
+        [data-testid="stSidebarContent"] h2, 
+        [data-testid="stSidebarContent"] h3, 
+        [data-testid="stSidebarContent"] p {
+            color: #e0e0e0 !important;
+        }
+        /* Colore specifico per i numeri/testo dentro i widget della sidebar */
+        [data-testid="stSidebarContent"] .stMarkdown {
+            color: #b8b8b8 !important;
+        }
+
         .microgeo-header {
             margin-top: -50px;
             margin-left: -5px;
@@ -69,7 +84,7 @@ with st.sidebar:
     st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🏠 DASHBOARD"): st.session_state["page"] = "home"
+    if st.button("📊 DASHBOARD"): st.session_state["page"] = "home"
     if st.button("📏 ELETTROLIVELLE"): st.session_state["page"] = "el"
     if st.button("📈 GRAFICI & STAMPE"): st.session_state["page"] = "pl"
     
