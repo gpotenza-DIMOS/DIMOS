@@ -4,7 +4,7 @@ import os
 # 1. Configurazione 
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# 2. CSS margini e layout (RIPRISTINATO ORIGINALE)
+# 2. CSS margini e layout (ORIGINALE INTEGRALE)
 st.markdown("""
     <style>
         /* Sidebar scura e logo Microgeo in alto a sx senza spazi */
@@ -52,7 +52,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Sidebar di Navigazione (IMPLEMENTATA SENZA CANCELLARE)
+# 3. Sidebar di Navigazione
 with st.sidebar:
     if os.path.exists("logo_microgeo.png"):
         st.image("logo_microgeo.png", width=200)
@@ -66,7 +66,7 @@ with st.sidebar:
         st.session_state["page"] = "plotter"
         st.rerun()
 
-    if st.button("📍 MAPPA & STRUTTURE"): # Implementazione aggiunta
+    if st.button("📍 MAPPA & STRUTTURE"): # AGGIUNTO
         st.session_state["page"] = "map"
         st.rerun()
         
@@ -81,7 +81,7 @@ if pg == "home":
     st.title("Piattaforma Integrata DIMOS")
     st.divider()
 
-    # --- ZONA IMMAGINI (ORIGINALE) ---
+    # --- ZONA IMMAGINI (ESTERNE AI RIQUADRI) ---
     st.markdown("### Gestione e Analisi")
     col_img1, col_img2 = st.columns([1, 4])
     with col_img1:
@@ -93,7 +93,7 @@ if pg == "home":
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- ZONA COMANDI (IMPLEMENTATA A 3 COLONNE) ---
+    # --- ZONA COMANDI (RIQUADRI SEPARATI) - AGGIUNTA TERZA COLONNA ---
     c1, c2, c3 = st.columns(3)
     
     with c1:
@@ -112,13 +112,34 @@ if pg == "home":
                 st.session_state["page"] = "plotter"
                 st.rerun()
 
-    with c3: # Implementazione aggiunta
+    with c3: # AGGIUNTO
         with st.container(border=True):
             st.markdown("#### Mappa & Strutture")
             st.write("Posizionamento sensori su GIS o Foto.")
             if st.button("Apri MAPPA", key="btn_map"):
                 st.session_state["page"] = "map"
                 st.rerun()
+
+    # --- SEZIONE INFO E LOGHI FOOTER (RIPRISTINATA INTEGRALMENTE) ---
+    st.divider()
+    col_f1, col_f2 = st.columns([2, 1])
+    
+    with col_f1:
+        st.markdown("""
+            ### Contatti e Supporto
+            **Microgeo S.r.l.** 📍 Via San Quirico, 306/A, 50013 Campi Bisenzio FI  
+            📞 +39 055 895 4766  
+            📧 [info@microgeo.it](mailto:info@microgeo.it)  
+            🌐 [www.microgeo.it](https://www.microgeo.it)
+        """)
+        
+    with col_f2:
+        st.markdown("### Seguici")
+        st.markdown("[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/company/microgeo-srl/)")
+        st.markdown("[![YouTube](https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/user/MicrogeoSrl)")
+
+    if os.path.exists("logo_microgeo.png"):
+        st.image("logo_microgeo.png", width=150)
 
 # --- LOGICA REINDIRIZZAMENTO ---
 elif pg == "plotter":
@@ -129,7 +150,7 @@ elif pg == "el":
     import elettrolivelle_mod
     elettrolivelle_mod.run_elettrolivelle()
 
-elif pg == "map": # Nuova pagina implementata
+elif pg == "map": # NUOVA PAGINA
     st.title("📍 Localizzazione Sensori")
     t1, t2 = st.tabs(["Mappa GIS", "Layout Strutturale"])
     with t1:
