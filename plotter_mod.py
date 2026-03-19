@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from io import BytesIO
 
-# --- GESTIONE LIBRERIE STAMPA  ---
+# --- GESTIONE LIBRERIE STAMPA ---
 try:
     from docx import Document
     from docx.shared import Inches
@@ -15,7 +15,7 @@ try:
 except ImportError:
     WORD_OK = False
 
-# --- CACHE DATI (Velocità) ---
+# --- CACHE DATI ---
 @st.cache_data(show_spinner=False)
 def carica_file_cache(uploaded_file):
     df_name = None
@@ -33,7 +33,6 @@ def carica_file_cache(uploaded_file):
     df_dati = df_dati.dropna(subset=[col_t]).sort_values(col_t)
     return df_dati, df_name
 
-# --- MOTORE PULIZIA E PARSING ---
 def pulisci_dati(serie, n_sigma, drop_zeros):
     originale = serie.copy()
     diag = {"zeri": 0, "gauss": 0}
@@ -62,16 +61,7 @@ def parse_column_info(col_name, df_name=None, col_index=None):
             param = p_match.group(1) if p_match else web_info.split()[-1].replace(unit.strip(), "").strip()
             return dl, sens, f"{param}{unit}"
         except: pass
-    unit_m = re.search(r'\[(.*?)\]', col_name)
-    unit = f" [{unit_m.group(1)}]" if unit_m else ""
-    parts = re.sub(r'\[.*?\]', '', col_name).strip().split()
-    dl = parts[0] if len(parts) > 0 else "DL"
-    if len(parts) > 1:
-        s_parts = parts[1].rsplit('_', 1)
-        if len(s_parts) > 1 and len(s_parts[1]) <= 3: sens_base, param = s_parts[0], s_parts[1]
-        else: sens_base, param = parts[1], "Dato"
-    else: sens_base, param = "Generico", "Dato"
-    return dl, sens_base, f"{param}{unit}"
+    return "DL", "Generico", col_name
 
 def run_plotter():
     if os.path.exists("logo_dimos.jpg"):
@@ -79,7 +69,6 @@ def run_plotter():
     st.markdown("# Dati Monitoraggio - Visualizzazione e stampa")
     st.divider()
 
-    # --- SIDEBAR PARAMETRI ---
     with st.sidebar:
         st.header("⚙️ Parametri Tecnici")
         sigma_val = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0)
@@ -92,7 +81,6 @@ def run_plotter():
     if uploaded_file:
         df_dati, df_name = carica_file_cache(uploaded_file)
         col_t = df_dati.columns[0]
-
         gerarchia = {}
         for i, col in enumerate(df_dati.columns):
             if i == 0: continue
@@ -101,36 +89,29 @@ def run_plotter():
             if sens not in gerarchia[dl]: gerarchia[dl][sens] = {}
             gerarchia[dl][sens][param] = col
 
-        # --- SEZIONE VISUALIZZAZIONE GRAFICO ---
-        st.subheader("📊 Visualizzazione Grafica Dinamica")
+        # --- VISUALIZZAZIONE ---
+        st.subheader("📊 Visualizzazione Grafica")
         cv1, cv2, cv3 = st.columns(3)
-        with cv1: sel_dl_v = st.multiselect("1. Datalogger (Vis)", sorted(gerarchia.keys()))
+        with cv1: sel_dl_v = st.multiselect("Datalogger", sorted(gerarchia.keys()), key="v1")
         with cv2:
             s_opts_v = sorted(list(set([s for d in sel_dl_v for s in gerarchia[d].keys()])))
-            sel_sens_v = st.multiselect("2. Sensori (Vis)", s_opts_v)
+            sel_sens_v = st.multiselect("Sensori", s_opts_v, key="v2")
         with cv3:
             p_opts_v = sorted(list(set([p for d in sel_dl_v for s in sel_sens_v if s in gerarchia[d] for p in gerarchia[d][s].keys()])))
-            sel_params_v = st.multiselect("3. Grandezze (Vis)", p_opts_v)
+            sel_params_v = st.multiselect("Grandezze", p_opts_v, key="v3")
 
         if sel_params_v:
             fig = go.Figure()
-            colors = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3", "#FF6692"]
-            report_stats = []
-            
+            colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
+            count = 0
             for d in sel_dl_v:
                 for s in sel_sens_v:
                     if s in gerarchia[d]:
                         for p in sel_params_v:
                             if p in gerarchia[d][s]:
-                                col_id = gerarchia[d][s][p]
-                                color = colors[len(report_stats) % len(colors)]
-                                y_v, diag = pulisci_dati(df_dati[col_id], sigma_val, rimuovi_zeri)
-                                diag["Parametro"] = f"{s} - {p}"
-                                report_stats.append(diag)
-                                
-                                fig.add_trace(go.Scatter(x=df_dati[col_t], y=y_v, name=f"{s}-{p}",
-                                    mode='lines+markers', line=dict(color=color, width=1.3), marker=dict(size=3)))
-                                
+                                y_v, _ = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
+                                color = colors[count % len(colors)]
+                                fig.add_trace(go.Scatter(x=df_dati[col_t], y=y_v, name=f"{s}-{p}", line=dict(color=color, width=1.3)))
                                 if show_trend:
                                     v_idx = y_v.notna()
                                     if v_idx.sum() > 4:
@@ -138,40 +119,57 @@ def run_plotter():
                                         poly = np.poly1d(np.polyfit(x_ts, y_v[v_idx], 3))
                                         fig.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
                                             name=f"Trend {s}-{p}", line=dict(color=color, width=2.5, dash='dash'), opacity=0.9))
+                                count += 1
+            fig.update_layout(height=600, template="plotly_white", xaxis=dict(rangeslider=dict(visible=True)))
+            st.plotly_chart(fig, use_container_width=True)
 
-            fig.update_layout(height=650, template="plotly_white", xaxis=dict(rangeslider=dict(visible=True)), hovermode="x unified")
-            st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False})
-            st.table(pd.DataFrame(report_stats).set_index("Parametro"))
-
-        # --- SEZIONE STAMPA WORD ( Logica 3 Livelli) ---
+        # --- STAMPA WORD CON GRAFICI ---
         st.divider()
-        st.subheader("📄 Configurazione Stampa Word")
+        st.subheader("📄 Report Word con Grafici")
         with st.container(border=True):
             cw1, cw2, cw3 = st.columns(3)
-            with cw1: sel_dl_w = st.multiselect("1. Datalogger (Stampa)", sorted(gerarchia.keys()))
+            with cw1: sel_dl_w = st.multiselect("Datalogger (Stampa)", sorted(gerarchia.keys()), key="w1")
             with cw2:
                 s_opts_w = sorted(list(set([s for d in sel_dl_w for s in gerarchia[d].keys()])))
-                sel_sens_w = st.multiselect("2. Sensori (Stampa)", s_opts_w)
+                sel_sens_w = st.multiselect("Sensori (Stampa)", s_opts_w, key="w2")
             with cw3:
                 p_opts_w = sorted(list(set([p for d in sel_dl_w for s in sel_sens_w if s in gerarchia[d] for p in gerarchia[d][s].keys()])))
-                sel_params_w = st.multiselect("3. Grandezze (Stampa)", p_opts_w)
+                sel_params_w = st.multiselect("Grandezze (Stampa)", p_opts_w, key="w3")
 
-            if st.button("🚀 Genera Report Word Selettivo") and WORD_OK:
+            if st.button("🚀 Genera Report Word Completo") and WORD_OK:
                 doc = Document()
                 doc.add_heading('Report Monitoraggio DIMOS', 0)
-                for d in sel_dl_w:
-                    doc.add_heading(f'Centralina: {d}', level=1)
-                    for s in sel_sens_w:
-                        if s in gerarchia[d]:
-                            p_finali = [p for p in sel_params_w if p in gerarchia[d][s]]
-                            if p_finali:
-                                doc.add_heading(f'Sensore: {s}', level=2)
-                                for p in p_finali:
-                                    y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
-                                    doc.add_paragraph(f"Parametro: {p} | Zeri: {diag['zeri']} | Gauss: {diag['gauss']}")
+                
+                with st.spinner("Generazione grafici in corso..."):
+                    for d in sel_dl_w:
+                        doc.add_heading(f'Centralina: {d}', level=1)
+                        for s in sel_sens_w:
+                            if s in gerarchia[d]:
+                                p_list = [p for p in sel_params_w if p in gerarchia[d][s]]
+                                if p_list:
+                                    doc.add_heading(f'Sensore: {s}', level=2)
+                                    for p in p_list:
+                                        y_c, diag = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
+                                        doc.add_paragraph(f"Grandezza: {p} | Zeri: {diag['zeri']} | Gauss: {diag['gauss']}")
+                                        
+                                        # CREAZIONE MINI-GRAFICO PER WORD
+                                        fig_w = go.Figure()
+                                        fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=y_c, name=p, line=dict(color="#1f77b4")))
+                                        if show_trend:
+                                            v_idx = y_c.notna()
+                                            if v_idx.sum() > 4:
+                                                x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
+                                                poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
+                                                fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
+                                                                         line=dict(color="red", width=2, dash='dash')))
+                                        
+                                        fig_w.update_layout(width=700, height=350, margin=dict(l=20, r=20, t=20, b=20), template="plotly_white")
+                                        img_bytes = fig_w.to_image(format="png")
+                                        doc.add_picture(BytesIO(img_bytes), width=Inches(6))
+                
                 buf = BytesIO()
                 doc.save(buf)
-                st.download_button("⬇️ Scarica File Word", buf.getvalue(), "Report_Monitoraggio.docx")
+                st.download_button("⬇️ Scarica Report con Grafici", buf.getvalue(), "Report_DIMOS.docx")
 
 if __name__ == "__main__":
     run_plotter()
