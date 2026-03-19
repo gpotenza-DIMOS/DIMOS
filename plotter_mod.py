@@ -109,7 +109,7 @@ def run_plotter():
                     if s in gerarchia[d]:
                         for p in sel_params_v:
                             if p in gerarchia[d][s]:
-                                y_v, diag_v = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
+                                y_v, _ = pulisci_dati(df_dati[gerarchia[d][s][p]], sigma_val, rimuovi_zeri)
                                 color = colors[count % len(colors)]
                                 fig.add_trace(go.Scatter(x=df_dati[col_t], y=y_v, name=f"{s}-{p}", line=dict(color=color, width=1.3)))
                                 if show_trend:
@@ -140,7 +140,7 @@ def run_plotter():
                 doc = Document()
                 doc.add_heading('Report Monitoraggio DIMOS', 0)
                 
-                with st.spinner("Generazione immagini..."):
+                with st.spinner("Elaborazione grafici..."):
                     for d in sel_dl_w:
                         doc.add_heading(f'Centralina: {d}', level=1)
                         for s in sel_sens_w:
@@ -153,33 +153,29 @@ def run_plotter():
                                         doc.add_paragraph(f"Grandezza: {p} | Zeri: {diag['zeri']} | Gauss: {diag['gauss']}")
                                         
                                         fig_w = go.Figure()
-                                        fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=y_c, name=p, line=dict(color="#1f77b4", width=1.5)))
+                                        fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=y_c, line=dict(color="#1f77b4", width=1.5)))
                                         if show_trend:
                                             v_idx = y_c.notna()
                                             if v_idx.sum() > 4:
                                                 x_ts = df_dati.loc[v_idx, col_t].apply(lambda x: x.timestamp())
                                                 poly = np.poly1d(np.polyfit(x_ts, y_c[v_idx], 3))
                                                 fig_w.add_trace(go.Scatter(x=df_dati[col_t], y=poly(df_dati[col_t].apply(lambda x: x.timestamp())),
-                                                    line=dict(color="red", width=2.5, dash='dash'), opacity=0.9))
+                                                    line=dict(color="red", width=2.5, dash='dash')))
                                         
-                                        fig_w.update_layout(width=800, height=400, template="plotly_white", margin=dict(l=40, r=40, t=40, b=40))
+                                        fig_w.update_layout(width=700, height=350, template="plotly_white", showlegend=False)
                                         
-                                        # PROVA ESPORTAZIONE (DOPPIO TENTATIVO)
                                         try:
-                                            img_data = fig_w.to_image(format="png", engine="kaleido")
-                                            doc.add_picture(BytesIO(img_data), width=Inches(6))
+                                            # Salvataggio temporaneo per evitare bug di Kaleido su alcuni PC
+                                            temp_img = f"temp_{d}_{s}_{p}.png".replace(" ","_").replace("/","_")
+                                            fig_w.write_image(temp_img, engine="kaleido")
+                                            doc.add_picture(temp_img, width=Inches(6))
+                                            os.remove(temp_img) # Pulizia
                                         except:
-                                            try:
-                                                # Tentativo di sblocco forzato
-                                                import kaleido
-                                                img_data = fig_w.to_image(format="png")
-                                                doc.add_picture(BytesIO(img_data), width=Inches(6))
-                                            except:
-                                                doc.add_paragraph("⚠️ Riavviare l'app o reinstallare kaleido==0.1.0.post1")
+                                            doc.add_paragraph("⚠️ Errore rendering grafico.")
 
                 buf = BytesIO()
                 doc.save(buf)
-                st.download_button("⬇️ Scarica Report", buf.getvalue(), "Report_DIMOS_Finale.docx")
+                st.download_button("⬇️ Scarica Report", buf.getvalue(), "Report_DIMOS.docx")
 
 if __name__ == "__main__":
     run_plotter()
