@@ -71,7 +71,7 @@ with st.sidebar:
         st.session_state["page"] = "plotter"
         st.rerun()
 
-    if st.button("📍 MAPPA & STRUTTURE"):
+    if st.button("📍 MAPPA & STRUTTURE"): # AGGIUNTA
         st.session_state["page"] = "map"
         st.rerun()
         
@@ -86,7 +86,7 @@ if pg == "home":
     st.title("Piattaforma Integrata DIMOS")
     st.divider()
 
-    # --- ZONA IMMAGINI (ESTERNE AI RIQUADRI) ---
+    # --- ZONA IMMAGINI (ESTERNE AI RIQUADRI - ORIGINALE) ---
     st.markdown("### Gestione e Analisi")
     col_img1, col_img2 = st.columns([1, 4])
     with col_img1:
@@ -98,7 +98,7 @@ if pg == "home":
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- ZONA COMANDI (TRE COLONNE) ---
+    # --- ZONA COMANDI (IMPLEMENTAZIONE A 3 COLONNE) ---
     c1, c2, c3 = st.columns(3)
     
     with c1:
@@ -117,7 +117,7 @@ if pg == "home":
                 st.session_state["page"] = "plotter"
                 st.rerun()
 
-    with c3:
+    with c3: # NUOVO MODULO MAPPA
         with st.container(border=True):
             st.markdown("#### Mappa & Strutture")
             st.write("Posizionamento sensori su GIS o Foto.")
@@ -125,14 +125,14 @@ if pg == "home":
                 st.session_state["page"] = "map"
                 st.rerun()
 
-    # --- FOOTER ---
+    # --- FOOTER E CONTATTI (ORIGINALE AL 100%) ---
     st.divider()
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
         st.markdown("""
             ### Contatti e Supporto
-            **Microgeo S.r.l.** 📍 Via de' Barucci 4, 50127 Firenze (FI)  
-            📞 +39 055 4220471  
+            **Microgeo S.r.l.** 📍 Via San Quirico, 306/A, 50013 Campi Bisenzio
+            📞 +39 055 895 4766
             📧 [info@microgeo.it](mailto:info@microgeo.it)  
             🌐 [www.microgeo.it](https://www.microgeo.it)
         """)
@@ -156,11 +156,5 @@ elif pg == "el":
     elettrolivelle_mod.run_elettrolivelle()
 
 elif pg == "map":
-    st.title("📍 Localizzazione Sensori")
-    t1, t2 = st.tabs(["Mappa GIS", "Layout Strutturale"])
-    with t1:
-        st.info("Visualizzazione territoriale.")
-    with t2:
-        st.info("Posizionamento sensori su immagine struttura.")
-        up = st.file_uploader("Carica immagine", type=["jpg","png"])
-        if up: st.image(up)
+    import map_module
+    map_module.run_map_manager()
