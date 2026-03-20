@@ -3,16 +3,12 @@ import pandas as pd
 import json
 import os
 import requests
-import base64
 from streamlit_folium import st_folium
 import folium
-from folium.plugins import ImageOverlay
-from PIL import Image
-from io import BytesIO
 
 CONFIG_FILE = "mac_positions.json"
 
-# --- FUNZIONI DI SERVIZIO (TUE) ---
+# --- FUNZIONI DI SERVIZIO ---
 def load_mac():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -63,31 +59,29 @@ def run_map_manager():
     ana = st.session_state['anagrafica']
     punti_salvati = load_mac()
 
-    # --- 2. PANNELLO DI CONTROLLO (MODIFICATO CON CARICA IMMAGINE) ---
+    # --- 2. PANNELLO DI CONTROLLO PARAMETRICO (Sopra la mappa) ---
     with st.container(border=True):
-        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+        c1, c2, c3 = st.columns([2, 2, 1])
         
         with c1:
             sel_dls = st.multiselect("📡 Filtra Datalogger", sorted(ana.keys()), default=sorted(ana.keys()))
+        
+        with c2:
+            # Creiamo la lista sensori filtrata
             opzioni_sensori = []
             for d in sel_dls:
                 for s in ana[d].keys():
                     opzioni_sensori.append(f"{d} | {s}")
-            target_selection = st.selectbox("🎯 Sensore da Posizionare", opzioni_sensori)
-        
-        with c2:
-            # RICHIESTA: Caricamento immagine planimetria
-            up_img = st.file_uploader("🖼️ Carica Planimetria", type=['png', 'jpg', 'jpeg'])
+            target_selection = st.selectbox("🎯 Seleziona Sensore da Posizionare", opzioni_sensori)
         
         with c3:
-            # RICHIESTA: Scala e Rotazione
-            sc = st.number_input("Scala (Size)", value=0.002, format="%.5f", step=0.0001)
-            rot = st.slider("Rotazione (°)", -180, 180, 0)
-            
-        with c4:
-            st.write("") 
-            if st.button("📥 Importa Excel", use_container_width=True):
-                nuovi = [{"nome": s, "lat": c['lat'], "lon": c['lon'], "dl": d} for d in ana for s, c in ana[d].items() if c['lat']]
+            st.write("") # Spaziatore
+            if st.button("📥 Importa da Excel", use_container_width=True):
+                nuovi = []
+                for d in ana:
+                    for s, c in ana[d].items():
+                        if c['lat'] and c['lon']:
+                            nuovi.append({"nome": s, "lat": c['lat'], "lon": c['lon'], "dl": d})
                 save_mac(nuovi)
                 st.rerun()
 
@@ -95,30 +89,21 @@ def run_map_manager():
     if 'center' not in st.session_state:
         st.session_state.center = [43.6158, 13.5189]
 
-    m = folium.Map(location=st.session_state.center, zoom_start=18)
+    # Ricerca località rapida (opzionale, messa sopra la mappa)
+    search_col, _ = st.columns([1, 2])
+    with search_col:
+        city_q = st.text_input("🔍 Cerca Città sulla Mappa", key="city_q")
+        if city_q:
+            coords = get_coords(city_q)
+            if coords: 
+                st.session_state.center = coords
+                # Nota: non facciamo rerun qui per non perdere il focus
     
-    # --- AGGIUNTA OVERLAY IMMAGINE (SOLO SE CARICATA) ---
-    if up_img:
-        try:
-            img_pil = Image.open(up_img).convert("RGBA")
-            if rot != 0:
-                img_pil = img_pil.rotate(-rot, expand=True, resample=Image.BICUBIC)
-            
-            # Conversione per la mappa
-            buffered = BytesIO()
-            img_pil.save(buffered, format="PNG")
-            img_b64 = base64.b64encode(buffered.getvalue()).decode()
-            
-            # Posizionamento centrato
-            lat, lon = st.session_state.center
-            b = [[lat - sc, lon - sc*1.5], [lat + sc, lon + sc*1.5]]
-            
-            ImageOverlay(image=f"data:image/png;base64,{img_b64}", bounds=b, opacity=0.5, zindex=1).add_to(m)
-        except:
-            st.error("Errore nel caricamento dell'immagine.")
-
-    # Visualizza i sensori salvati
+    m = folium.Map(location=st.session_state.center, zoom_start=15)
+    
+    # Visualizza tutti i sensori
     for p in punti_salvati:
+        # Colore differenziato per il sensore selezionato
         is_sel = target_selection and p['nome'] in target_selection
         folium.Marker(
             [p['lat'], p['lon']], 
@@ -127,20 +112,21 @@ def run_map_manager():
             icon=folium.Icon(color='blue' if is_sel else 'red', icon='info-sign')
         ).add_to(m)
 
-    # Render mappa con protezione per il click
+    # Render mappa
     output = st_folium(m, width=1300, height=600, key="mac_main_dashboard")
 
-    # --- 4. SALVATAGGIO AL CLICK (CON PROTEZIONE KEYERROR) ---
-    if output and output.get("last_clicked"):
+    # --- 4. SALVATAGGIO AL CLICK ---
+    if output.get("last_clicked"):
         lat_c = output["last_clicked"]["lat"]
         lon_c = output["last_clicked"]["lng"]
         
-        if target_selection and " | " in target_selection:
-            dl_puro, nome_puro = target_selection.split(" | ")
-            punti_salvati = [p for p in punti_salvati if p['nome'] != nome_puro]
-            punti_salvati.append({"nome": nome_puro, "lat": lat_c, "lon": lon_c, "dl": dl_puro})
-            save_mac(punti_salvati)
-            st.rerun()
+        dl_puro, nome_puro = target_selection.split(" | ")
+        
+        # Aggiornamento database
+        punti_salvati = [p for p in punti_salvati if p['nome'] != nome_puro]
+        punti_salvati.append({"nome": nome_puro, "lat": lat_c, "lon": lon_c, "dl": dl_puro})
+        save_mac(punti_salvati)
+        st.rerun()
 
     # --- 5. FOOTER DATI ---
     if punti_salvati:
