@@ -5,11 +5,11 @@ import os
 import requests
 import folium
 from folium.features import DivIcon
+from folium.raster_layers import ImageOverlay  # <-- Import corretto
 from streamlit_folium import st_folium
 from PIL import Image
 from io import BytesIO
 import base64
-from folium.plugins import ImageOverlay
 
 CONFIG_FILE = "mac_positions.json"
 
@@ -63,7 +63,7 @@ def run_map_manager():
 
     # ---------- GESTIONE EXCEL ----------
     with st.expander("📂 Carica o Cambia Excel", expanded='anagrafica' not in st.session_state):
-        file_input = st.file_uploader("Carica Excel (Foglio NAME)", type=['xlsx', 'xlsm'])
+        file_input = st.file_uploader("Carica Excel (Foglio NAME)", type=['xlsx','xlsm'])
         if file_input:
             ana = parse_excel(file_input)
             if ana:
@@ -135,36 +135,6 @@ def run_map_manager():
 
         overlay = ImageOverlay(image=f"data:image/png;base64,{b64_img}", bounds=bounds, opacity=opacity_slider)
         overlay.add_to(m)
-
-        # JS minimo per rendere overlay trascinabile
-        draggable_js = f"""
-        <script>
-        var overlay = {overlay.get_name()};
-        overlay.on('add', function() {{
-            overlay.getElement().style.cursor = 'move';
-            L.DomEvent.on(overlay.getElement(), 'mousedown', function(e) {{
-                var map = overlay._map;
-                var startLat = e.latlng.lat;
-                var startLng = e.latlng.lng;
-                function moveHandler(event) {{
-                    var deltaLat = event.latlng.lat - startLat;
-                    var deltaLng = event.latlng.lng - startLng;
-                    var b = overlay.getBounds();
-                    var newBounds = [
-                        [b.getSouthWest().lat + deltaLat, b.getSouthWest().lng + deltaLng],
-                        [b.getNorthEast().lat + deltaLat, b.getNorthEast().lng + deltaLng]
-                    ];
-                    overlay.setBounds(newBounds);
-                    startLat = event.latlng.lat;
-                    startLng = event.latlng.lng;
-                }}
-                map.on('mousemove', moveHandler);
-                map.once('mouseup', function(){{ map.off('mousemove', moveHandler); }});
-            }});
-        }});
-        </script>
-        """
-        m.get_root().html.add_child(folium.Element(draggable_js))
 
     # ---------- MARKER CON NOME ----------
     for p in punti_salvati:
