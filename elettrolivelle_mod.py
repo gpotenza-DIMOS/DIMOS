@@ -6,7 +6,7 @@ import os
 import re
 from io import BytesIO
 
-# --- GESTIONE LIBRERIE ---
+# --- LIBRERIE STAMPA ---
 try:
     from docx import Document
     from docx.shared import Inches
@@ -15,20 +15,20 @@ try:
 except:
     DOC_OK = False
 
-# --- MOTORE DI CALCOLO (Logica Originale) ---
+# --- LOGICA DI CALCOLO ORIGINALE (VBA STYLE) ---
 @st.cache_data(show_spinner=False)
 def elaborazione_vba_originale(df_values, l_barra, n_sigma, limit_val):
-    # 1. Conversione in mm: L * sin(rad(deg))
+    # Calcolo mm: L * sin(rad(deg))
     data_mm = l_barra * np.sin(np.radians(df_values.values))
-    # 2. Delta C0 (Valore - Prima lettura valida)
+    # Delta C0 (Rispetto alla riga 0)
     data_c0 = data_mm - data_mm[0, :]
-    # 3. Deformata Cumulata (CP0)
+    # Deformata Cumulata (Somma vettoriale dei sensori in riga)
     data_cp0 = np.cumsum(data_c0, axis=1)
     
-    # Filtro Limiti (Soglia Errore)
+    # Filtro Limiti Hard
     data_cp0[np.abs(data_cp0) > limit_val] = np.nan
     
-    # Filtro Gaussiano (Sigma)
+    # Filtro Gauss (Sigma)
     means = np.nanmean(data_cp0, axis=0)
     stds = np.nanstd(data_cp0, axis=0)
     for j in range(data_cp0.shape[1]):
@@ -38,48 +38,45 @@ def elaborazione_vba_originale(df_values, l_barra, n_sigma, limit_val):
         
     return pd.DataFrame(data_cp0, index=df_values.index).ffill().fillna(0)
 
-# --- FUNZIONE PRINCIPALE DA INCOLLARE ---
+# --- FUNZIONE RICHIAMATA DA APP_DIMOS.PY ---
 def run_elettrolivelle_advanced():
-    st.header("📏 Monitoraggio Deformate Elettrolivelle")
+    st.header("📏 Modulo Elettrolivelle")
 
-    # Sidebar dedicata ai parametri del modulo
     with st.sidebar:
         st.divider()
-        st.subheader("⚙️ Parametri Calcolo")
-        file_input = st.file_uploader("Carica File Excel (.xlsm)", type=['xlsm', 'xlsx'], key="el_up")
+        st.subheader("⚙️ Setup Dati")
+        file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsm', 'xlsx'], key="el_up")
         
         if file_input:
-            asse_sel = st.selectbox("Asse di Analisi", ["X", "Y", "Z"], key="el_asse")
+            asse_sel = st.selectbox("Asse", ["X", "Y", "Z"], key="el_asse")
             l_barra = st.number_input("Lunghezza Barra (mm)", value=3000)
-            sigma_val = st.slider("Filtro Sigma (Gauss)", 1.0, 4.0, 2.0)
+            sigma_val = st.slider("Filtro Sigma", 1.0, 4.0, 2.0)
             limit_val = st.number_input("Soglia Errore (mm)", value=30.0)
             
             st.divider()
-            st.subheader("🎬 Animazione")
+            st.subheader("🎬 Opzioni Video")
             step_video = st.select_slider("Campionamento:", 
                 options=["Ogni Lettura", "1 Giorno", "1 Settimana"], value="1 Giorno")
             vel_animazione = st.slider("Velocità (ms)", 100, 1000, 400)
 
     if not file_input:
-        st.info("Carica il file Excel per attivare il modulo.")
+        st.info("Carica il file Excel per procedere.")
         return
 
     # Lettura Excel
     xls = pd.ExcelFile(file_input)
-    # Filtro fogli ETS_ (escludendo i calcoli già fatti)
+    # Filtriamo i fogli dati (ETS_...)
     sheets = [s for s in xls.sheet_names if s.startswith("ETS_") and not s.endswith(("C0", "CP0"))]
     
-    tab_plot, tab_print = st.tabs(["📊 Analisi Grafica", "🖨️ Report Word"])
+    tab1, tab2 = st.tabs(["📊 Grafico Animato", "🖨️ Esportazione Report"])
 
-    with tab_plot:
+    with tab1:
         sel_sheet = st.selectbox("Seleziona Stringa", sheets)
         df_full = pd.read_excel(file_input, sheet_name=sel_sheet)
         df_full.columns = [str(c).strip() for c in df_full.columns]
-        
-        # Tempo (sempre prima colonna)
         time_col = pd.to_datetime(df_full.iloc[:, 0])
 
-        # Recupero ordine da foglio ARRAY
+        # --- LOGICA ARRAY: SEQUENZA FISICA ---
         sensor_order = []
         if "ARRAY" in xls.sheet_names:
             df_arr = pd.read_excel(file_input, sheet_name="ARRAY", header=None)
@@ -87,11 +84,10 @@ def run_elettrolivelle_advanced():
             if not riga.empty:
                 sensor_order = riga.iloc[0, 1:].dropna().astype(str).tolist()
 
-        # Selezione colonne sensori basata su ARRAY
+        # Selezione colonne sensori in ordine ARRAY
         cols_found = []
         labels_x = []
         for s_id in sensor_order:
-            # Pattern: ID + ASSE (es. CL_01..._X)
             pattern = rf"{s_id}.*_{asse_sel}"
             match = [c for c in df_full.columns if re.search(pattern, str(c), re.IGNORECASE)]
             if match:
@@ -99,13 +95,13 @@ def run_elettrolivelle_advanced():
                 labels_x.append(s_id)
 
         if not cols_found:
-            st.error(f"Dati non trovati per {sel_sheet} asse {asse_sel}")
+            st.error(f"Nessun dato per asse {asse_sel} nel foglio {sel_sheet}")
             return
 
-        # Calcolo
+        # Calcolo Deformata Cumulata
         df_cp0 = elaborazione_vba_originale(df_full[cols_found].ffill(), l_barra, sigma_val, limit_val)
         
-        # Campionamento per il grafico
+        # Campionamento per fluidità video
         df_calc = df_cp0.copy()
         df_calc['Data_Ora'] = time_col
         if step_video == "1 Giorno":
@@ -115,7 +111,7 @@ def run_elettrolivelle_advanced():
         else:
             df_sampled = df_calc.set_index('Data_Ora')
 
-        # Grafico Plotly Animato
+        # --- GRAFICO ANIMATO ---
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=labels_x, y=df_sampled.iloc[0],
@@ -127,8 +123,8 @@ def run_elettrolivelle_advanced():
         ))
 
         fig.update_layout(
-            xaxis=dict(type='category', title="Sequenza Sensori"),
-            yaxis=dict(range=[-limit_val-5, limit_val+5], title="mm"),
+            xaxis=dict(type='category', title="Sequenza Fisica"),
+            yaxis=dict(range=[-limit_val-5, limit_val+5], title="Spostamento (mm)"),
             template="plotly_white", height=600,
             sliders=[{"active": 0, "steps": [{"method": "animate", "label": str(t), 
                        "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": True}}]} 
@@ -143,21 +139,21 @@ def run_elettrolivelle_advanced():
 
         st.plotly_chart(fig, use_container_width=True)
 
-    with tab_print:
-        st.subheader("Generazione Reportistica Word")
-        if st.button("🚀 GENERA REPORT WORD"):
+    with tab2:
+        st.subheader("Esportazione Documento Word")
+        if st.button("🚀 GENERA DOCUMENTAZIONE"):
             if not DOC_OK:
-                st.error("Libreria docx non configurata.")
+                st.error("Libreria docx mancante.")
             else:
-                with st.spinner("Creazione documento in corso..."):
+                with st.spinner("Generazione..."):
                     doc = Document()
                     doc.add_heading(f"Report Deformata - {sel_sheet}", 0)
                     
-                    # Generazione immagine per Word del frame attuale
+                    # Immagine del frame corrente
                     buf = BytesIO()
                     pio.write_image(fig, buf, format="png", width=800, height=450)
                     doc.add_picture(buf, width=Inches(6))
                     
                     target = BytesIO()
                     doc.save(target)
-                    st.download_button("📥 Scarica Word", target.getvalue(), f"Report_{sel_sheet}.docx")
+                    st.download_button("📥 Scarica File", target.getvalue(), f"Report_{sel_sheet}.docx")
