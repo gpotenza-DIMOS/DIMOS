@@ -4,122 +4,190 @@ import json
 import os
 import requests
 import base64
-import folium
 from streamlit_folium import st_folium
+import folium
 from folium.raster_layers import ImageOverlay
 from PIL import Image
 from io import BytesIO
 
 CONFIG_FILE = "mac_positions.json"
 
-def load_json_safe(file):
-    if os.path.exists(file):
+# ----------------- FUNZIONI -----------------
+def load_mac():
+    if os.path.exists(CONFIG_FILE):
         try:
-            with open(file, "r") as f:
-                content = f.read().strip()
-                return json.loads(content) if content else []
-        except: return []
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return []
     return []
 
-def save_json_safe(file, data):
-    with open(file, "w") as f:
+def save_mac(data):
+    with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-def parse_excel_with_coords(file):
+def get_coords(city_name):
     try:
-        xls = pd.ExcelFile(file)
-        if "NAME" not in xls.sheet_names: return None
-        df = pd.read_excel(xls, sheet_name="NAME", header=None).fillna("")
-        
-        ana = {}
-        excel_points = []
-        
-        for c in range(1, df.shape[1]):
-            dl = str(df.iloc[0, c]).strip()
-            sn = str(df.iloc[1, c]).strip()
-            
-            if dl and dl != "nan" and dl != "":
-                if dl not in ana: ana[dl] = []
-                ana[dl].append(sn)
-                
-                # Cerca coordinate nelle righe 3 e 4 (indice 3 e 4 di pandas)
-                try:
-                    lat_ex = float(df.iloc[3, c])
-                    lon_ex = float(df.iloc[4, c])
-                    excel_points.append({"dl": dl, "nome": sn, "lat": lat_ex, "lon": lon_ex})
-                except (ValueError, TypeError):
-                    continue
-        return ana, excel_points
-    except: return None, []
+        url = f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1"
+        headers = {'User-Agent': 'DIMOS_MAC_DASHBOARD'}
+        res = requests.get(url, headers=headers).json()
+        if res:
+            return float(res[0]['lat']), float(res[0]['lon'])
+    except:
+        return None
+    return None
 
+def parse_excel(file):
+    xls = pd.ExcelFile(file)
+    if "NAME" not in xls.sheet_names:
+        return None
+
+    df = pd.read_excel(xls, sheet_name="NAME", header=None).fillna("")
+    ana = {}
+
+    for c in range(1, df.shape[1]):
+        dl = str(df.iloc[0, c]).strip()
+        sn = str(df.iloc[1, c]).strip()
+        try:
+            lat = float(df.iloc[3, c]) if df.iloc[3, c] != "" else None
+            lon = float(df.iloc[4, c]) if df.iloc[4, c] != "" else None
+        except:
+            lat, lon = None, None
+
+        if dl not in ana:
+            ana[dl] = {}
+        ana[dl][sn] = {"lat": lat, "lon": lon}
+
+    return ana
+
+# ----------------- MAIN -----------------
 def run_map_manager():
-    st.subheader("📍 Gestione Posizionamento Sensori MAC")
+    st.title("🌍 Dashboard MAC PRO")
 
-    if 'punti' not in st.session_state:
-        st.session_state.punti = load_json_safe(CONFIG_FILE)
-    if 'center' not in st.session_state:
-        st.session_state.center = [43.61, 13.52] # Default Ancona/Falconara come da tuo screen
-
-    with st.sidebar:
-        st.image("https://www.microgeo.it/wp-content/uploads/2023/04/logo-microgeo.png", width=150)
-        up = st.file_uploader("Carica Anagrafica (.xlsx)", type=['xlsx'])
-        
-        if up:
-            ana, ex_punti = parse_excel_with_coords(up)
+    # ---------- GESTIONE EXCEL ----------
+    with st.expander("📂 Carica o Cambia Excel", expanded='anagrafica' not in st.session_state):
+        file_input = st.file_uploader("Carica Excel (Foglio NAME)", type=['xlsx', 'xlsm'])
+        if file_input:
+            ana = parse_excel(file_input)
             if ana:
-                st.session_state['anagrafica_data'] = ana
-                # Sincronizza i punti dell'Excel con quelli del JSON (l'Excel vince se presente)
-                current_punti = {f"{p['dl']}|{p['nome']}": p for p in st.session_state.punti}
-                for ep in ex_punti:
-                    current_punti[f"{ep['dl']}|{ep['nome']}"] = ep
-                
-                st.session_state.punti = list(current_punti.values())
-                save_json_safe(CONFIG_FILE, st.session_state.punti)
-                st.success(f"Caricati {len(ex_punti)} sensori con coordinate.")
+                st.session_state['anagrafica'] = ana
+                st.success("Excel caricato")
+            else:
+                st.error("Foglio NAME non trovato")
 
-    if 'anagrafica_data' not in st.session_state:
-        st.info("💡 Carica l'Excel per visualizzare i sensori e le coordinate pre-esistenti.")
+        if 'anagrafica' in st.session_state:
+            if st.button("🔄 Cambia Excel"):
+                del st.session_state['anagrafica']
+                st.rerun()
+
+    if 'anagrafica' not in st.session_state:
         st.stop()
 
-    ana = st.session_state['anagrafica_data']
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        sel_dl = st.multiselect("📡 Datalogger", list(ana.keys()), default=list(ana.keys()))
-    with c2:
-        lista_full = [f"{d} | {s}" for d in sel_dl for s in ana[d]]
-        visibili = st.multiselect("👁️ Mostra", lista_full, default=lista_full)
-    with c3:
-        target = st.selectbox("🎯 Target per muovere", lista_full)
+    ana = st.session_state['anagrafica']
+    punti_salvati = load_mac()
 
-    m = folium.Map(location=st.session_state.center, zoom_start=17)
+    # ---------- CONTROLLO SENSORI ----------
+    col1, col2, col3 = st.columns(3)
 
-    for p in st.session_state.punti:
-        tag = f"{p['dl']} | {p['nome']}"
-        if tag in visibili:
-            is_target = (tag == target)
-            folium.Marker(
-                [p['lat'], p['lon']], 
-                popup=tag, 
-                tooltip=tag,
-                icon=folium.Icon(color='red' if is_target else 'blue', icon='info-sign')
+    with col1:
+        sel_dls = st.multiselect("📡 Filtra Datalogger", sorted(ana.keys()), default=sorted(ana.keys()))
+
+    with col2:
+        sensori_filtrati = [f"{d} | {s}" for d in sel_dls for s in ana[d].keys()]
+        sensori_visibili = st.multiselect("👁️ Sensori visibili", sensori_filtrati, default=sensori_filtrati)
+
+    with col3:
+        target = st.selectbox("🎯 Sensore da posizionare", sensori_filtrati)
+
+    # ---------- OVERLAY PLANIMETRIA ----------
+    with st.expander("🖼️ Overlay Planimetria"):
+        up_img = st.file_uploader("Carica immagine", type=['png', 'jpg', 'jpeg'])
+
+        scale_slider = st.slider("Scala", 0.0001, 0.02, 0.002, 0.0001)
+        rotation_slider = st.slider("Rotazione (°)", -180, 180, 0)
+        opacity_slider = st.slider("Trasparenza", 0.0, 1.0, 0.5)
+
+    # ---------- CENTRO MAPPA ----------
+    if 'center' not in st.session_state:
+        if punti_salvati:
+            st.session_state.center = [punti_salvati[0]['lat'], punti_salvati[0]['lon']]
+        else:
+            st.session_state.center = [45.4642, 9.1900]  # Milano di default
+
+    city = st.text_input("🔍 Cerca città")
+    if city:
+        coords = get_coords(city)
+        if coords:
+            st.session_state.center = coords
+
+    m = folium.Map(location=st.session_state.center, zoom_start=18)
+
+    # ---------- OVERLAY IMAGE MANTENENDO PROPORZIONI ----------
+    if up_img:
+        try:
+            img = Image.open(up_img).convert("RGBA")
+            w, h = img.size
+            aspect_ratio = h / w  # altezza / larghezza per mantenere proporzioni
+
+            if rotation_slider != 0:
+                img = img.rotate(-rotation_slider, expand=True)
+
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            b64_img = base64.b64encode(buf.getvalue()).decode()
+
+            lat, lon = st.session_state.center
+
+            # Calcolo bounds mantenendo proporzioni
+            width = scale_slider
+            height = scale_slider * aspect_ratio
+            bounds = [[lat - height, lon - width], [lat + height, lon + width]]
+
+            ImageOverlay(
+                image=f"data:image/png;base64,{b64_img}",
+                bounds=bounds,
+                opacity=opacity_slider
             ).add_to(m)
 
-    scelta = st_folium(m, width=1200, height=550, key="map_v4")
+        except Exception as e:
+            st.error(f"Errore overlay: {e}")
 
-    if scelta and scelta.get("last_clicked") and target:
-        lat_c, lon_c = scelta["last_clicked"]["lat"], scelta["last_clicked"]["lng"]
-        dl_t, sn_t = target.split(" | ")
-        
-        # Aggiorna posizione
-        st.session_state.punti = [p for p in st.session_state.punti if not (p['dl']==dl_t and p['nome']==sn_t)]
-        st.session_state.punti.append({"dl": dl_t, "nome": sn_t, "lat": lat_c, "lon": lon_c})
-        
-        save_json_safe(CONFIG_FILE, st.session_state.punti)
+    # ---------- MARKER ----------
+    for p in punti_salvati:
+        nome_full = f"{p['dl']} | {p['nome']}"
+        is_visible = nome_full in sensori_visibili
+        is_selected = target == nome_full
+
+        if is_visible:
+            folium.Marker(
+                [p['lat'], p['lon']],
+                popup=f"{p['dl']} - {p['nome']}",
+                icon=folium.Icon(color='blue' if is_selected else 'red')
+            ).add_to(m)
+
+    # ---------- RENDER MAPPA ----------
+    output = st_folium(m, width=1400, height=650)
+
+    # ---------- CLICK SALVATAGGIO ----------
+    if output.get("last_clicked") and target:
+        lat_c = output["last_clicked"]["lat"]
+        lon_c = output["last_clicked"]["lng"]
+
+        dl, nome = target.split(" | ")
+
+        punti_salvati = [p for p in punti_salvati if not (p['nome'] == nome and p['dl'] == dl)]
+        punti_salvati.append({"nome": nome, "lat": lat_c, "lon": lon_c, "dl": dl})
+        save_mac(punti_salvati)
         st.rerun()
 
-    with st.expander("📋 Tabella Coordinate Correnti"):
-        if st.session_state.punti:
-            st.dataframe(pd.DataFrame(st.session_state.punti), use_container_width=True)
+    # ---------- TABELLA DATI ----------
+    if punti_salvati:
+        with st.expander("📄 Dati Sensori"):
+            st.dataframe(pd.DataFrame(punti_salvati))
+            if st.button("🗑️ Reset Mappa"):
+                save_mac([])
+                st.rerun()
+
 
 if __name__ == "__main__":
     run_map_manager()
