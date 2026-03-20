@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import requests
 import base64
 from streamlit_folium import st_folium
 import folium
@@ -11,6 +12,7 @@ from io import BytesIO
 
 CONFIG_FILE = "mac_positions.json"
 
+# --- FUNZIONI DI SERVIZIO (TUE ORIGINALI) ---
 def load_mac():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -19,46 +21,70 @@ def load_mac():
     return []
 
 def save_mac(data):
-    with open(CONFIG_FILE, "w") as f: json.dump(data, f, indent=4)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
+def get_coords(city_name):
+    try:
+        url = f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1"
+        headers = {'User-Agent': 'DIMOS_MAC_DASHBOARD'}
+        response = requests.get(url, headers=headers).json()
+        if response:
+            return float(response[0]['lat']), float(response[0]['lon'])
+    except: return None
+    return None
+
+# --- MODULO PRINCIPALE ---
 def run_map_manager():
-    st.header("🌍 Dashboard MAC - Operativa")
+    st.header("🌍 Dashboard MAC - Controllo Integrato")
 
-    # 1. Controllo Anagrafica (Senza crash)
+    # 1. RECUPERO DATI (TUA LOGICA)
     if 'anagrafica' not in st.session_state:
-        st.info("👋 Carica il file Excel nel modulo Plotter per vedere i sensori.")
-        # Se vogliamo caricare anche qui:
-        up_ex = st.file_uploader("In alternativa, carica Excel qui", type=['xlsx', 'xlsm'], key="map_ex")
-        if up_ex:
-            # Logica minima di caricamento se serve...
-            pass
+        st.warning("⚠️ Nessun dato caricato. Carica l'Excel per attivare la mappa.")
+        file_input = st.file_uploader("📂 Carica Excel Monitoraggio (Foglio NAME)", type=['xlsx', 'xlsm'])
+        if file_input:
+            xls = pd.ExcelFile(file_input)
+            if "NAME" in xls.sheet_names:
+                df_n = pd.read_excel(xls, sheet_name="NAME", header=None).fillna("")
+                ana = {}
+                for c in range(1, df_n.shape[1]):
+                    dl = str(df_n.iloc[0, c]).strip()
+                    sn = str(df_n.iloc[1, c]).strip()
+                    try:
+                        la = float(df_n.iloc[3, c]) if df_n.iloc[3, c] != "" else None
+                        lo = float(df_n.iloc[4, c]) if df_n.iloc[4, c] != "" else None
+                    except: la, lo = None, None
+                    if dl not in ana: ana[dl] = {}
+                    ana[dl][sn] = {"lat": la, "lon": lo}
+                st.session_state['anagrafica'] = ana
+                st.rerun()
         return
 
     ana = st.session_state['anagrafica']
     punti_salvati = load_mac()
 
-    # --- 2. CONTROLLI SOPRA LA MAPPA ---
+    # --- 2. PANNELLO DI CONTROLLO (AGGIUNTE RICHIESTE) ---
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
         with c1:
             sel_dls = st.multiselect("📡 Datalogger", sorted(ana.keys()), default=sorted(ana.keys()))
-            opzioni = [f"{d} | {s}" for d in sel_dls for s in ana[d].keys()]
-            target_selection = st.selectbox("🎯 Sensore da piazzare", opzioni if opzioni else ["Nessun Sensore"])
+            opzioni_sensori = [f"{d} | {s}" for d in sel_dls for s in ana[d].keys()]
+            target_selection = st.selectbox("🎯 Sensore da Posizionare", opzioni_sensori)
         with c2:
-            up_img = st.file_uploader("🖼️ Planimetria (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
+            up_img = st.file_uploader("🖼️ Carica Planimetria", type=['png', 'jpg', 'jpeg'])
         with c3:
-            scale = st.number_input("Scala", value=0.002, format="%.5f", step=0.0001)
+            scale = st.number_input("Scala Immagine", value=0.002, format="%.5f", step=0.0001)
             rot = st.slider("Rotazione (°)", -180, 180, 0)
         with c4:
             opac = st.slider("Trasp.", 0.0, 1.0, 0.5)
 
-    # --- 3. MAPPA ---
+    # --- 3. GESTIONE MAPPA ---
     if 'center' not in st.session_state:
         st.session_state.center = [43.6158, 13.5189]
 
     m = folium.Map(location=st.session_state.center, zoom_start=18)
-
-    # Gestione Immagine
+    
+    # LIVELLO PLANIMETRIA (SE PRESENTE)
     if up_img:
         try:
             img = Image.open(up_img).convert("RGBA")
@@ -71,34 +97,30 @@ def run_map_manager():
             lat, lon = st.session_state.center
             bounds = [[lat - scale, lon - scale*1.5], [lat + scale, lon + scale*1.5]]
             ImageOverlay(image=f"data:image/png;base64,{img_b64}", bounds=bounds, opacity=opac, zindex=1).add_to(m)
-        except: st.error("Errore nel rendering immagine")
+        except Exception as e:
+            st.error(f"Errore immagine: {e}")
 
-    # Disegno Marker Esistenti
+    # MARKER (TUA LOGICA ORIGINALE)
     for p in punti_salvati:
         is_sel = target_selection and p['nome'] in target_selection
-        folium.Marker([p['lat'], p['lon']], tooltip=p['nome'],
-                      icon=folium.Icon(color='blue' if is_sel else 'red')).add_to(m)
+        folium.Marker(
+            [p['lat'], p['lon']], 
+            tooltip=p['nome'],
+            icon=folium.Icon(color='blue' if is_sel else 'red', icon='info-sign')
+        ).add_to(m)
 
-    # --- 4. RENDER (FIX ERRORI) ---
-    output = st_folium(m, width=1200, height=600, key="mac_map_stable")
+    # RENDER MAPPA
+    output = st_folium(m, width=1300, height=600, key="mac_main_dashboard")
 
-    # Logica Click sicura: controlliamo che 'last_clicked' esista E non sia nullo
-    if output and "last_clicked" in output and output["last_clicked"] is not None:
-        # Verifichiamo se il click è "nuovo" per evitare loop infiniti di rerun
-        click_lat = output["last_clicked"]["lat"]
-        click_lon = output["last_clicked"]["lng"]
+    # --- 4. SALVATAGGIO AL CLICK (FIXED) ---
+    if output and output.get("last_clicked"):
+        lat_c = output["last_clicked"]["lat"]
+        lon_c = output["last_clicked"]["lng"]
         
-        # Salviamo solo se abbiamo un sensore selezionato validamente
         if target_selection and " | " in target_selection:
             dl_puro, nome_puro = target_selection.split(" | ")
-            
-            # Evitiamo di salvare se le coordinate sono identiche all'ultimo punto (previene loop)
+            # Aggiornamento database
             punti_salvati = [p for p in punti_salvati if p['nome'] != nome_puro]
-            punti_salvati.append({"nome": nome_puro, "lat": click_lat, "lon": click_lon, "dl": dl_puro})
+            punti_salvati.append({"nome": nome_puro, "lat": lat_c, "lon": lon_c, "dl": dl_puro})
             save_mac(punti_salvati)
             st.rerun()
-
-    # Tabella dati a scomparsa
-    if punti_salvati:
-        with st.expander("Dati salvati"):
-            st.dataframe(pd.DataFrame(punti_salvati))
