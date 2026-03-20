@@ -45,7 +45,7 @@ with st.sidebar:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🏠 DASHBOARD"): st.session_state["page"] = "home"
     if st.button("📈 ANALISI GRAFICA"): st.session_state["page"] = "pl"
-    if st.button("📍 MAPPA & STRUTTURE"): st.session_state["page"] = "map"
+    if st.button("📍 MAPPE"): st.session_state["page"] = "map"
     if st.button("📏 ELETTROLIVELLE"): st.session_state["page"] = "el"
     st.markdown("<br><br>", unsafe_allow_html=True)
     if st.button("🚪 LOGOUT"):
