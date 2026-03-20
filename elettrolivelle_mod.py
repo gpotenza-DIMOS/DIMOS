@@ -2,129 +2,128 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-import os
 import re
+import os
 from io import BytesIO
 
-# --- GESTIONE LIBRERIA STAMPA ---
-try:
-    from docx import Document
-    from docx.shared import Inches
-    DOCX_AVAILABLE = True
-except ImportError:
-    DOCX_AVAILABLE = False
-
-# --- MOTORE DI CALCOLO ORIGINALE (Invariato) ---
-@st.cache_data(show_spinner=False)
-def elaborazione_vba_completa(df_values, l_barra, n_sigma):
-    # Logica originale: sostituzione 0 con NaN
-    df_values = df_values.replace(0, np.nan)
-    # Calcolo mm: L * sin(rad(deg))
-    data_mm = l_barra * np.sin(np.radians(df_values.values))
-    # Delta rispetto alla prima lettura (C0)
-    data_c0 = data_mm - data_mm[0, :]
-    data_processed = data_c0.copy()
-    
-    # Filtro Sigma Gauss
-    means = np.nanmean(data_processed, axis=0)
-    stds = np.nanstd(data_processed, axis=0)
-    for j in range(data_processed.shape[1]):
-        m, s = means[j], stds[j]
-        mask = (data_processed[:, j] < m - n_sigma*s) | (data_processed[:, j] > m + n_sigma*s)
-        data_processed[mask, j] = m
-    return pd.DataFrame(data_processed, index=df_values.index)
-
-# --- FUNZIONI DI SUPPORTO GRAFICO ---
-@st.cache_data(show_spinner=False)
-def genera_frames_animazione(data_matrix, color_matrix, labels):
-    return [go.Frame(
-        data=[go.Scatter(
-            x=labels, y=data_matrix[i],
-            text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[i]],
-            marker=dict(color=color_matrix[i])
-        )],
-        name=str(i)
-    ) for i in range(len(data_matrix))]
-
-def precalcola_colori(df):
-    def get_color(v):
-        if pd.isnull(v): return 'rgba(0,0,0,0)'
-        abs_v = abs(v)
-        if abs_v >= 5: return 'red'
-        if abs_v >= 2: return 'orange'
-        return 'green'
-    return df.map(get_color).values
-
-@st.fragment
-def render_trend_analysis(df_cp0, time_col, labels):
-    st.divider()
-    st.subheader("📈 Analisi Dettaglio Sensore")
-    sel_sens = st.multiselect("Seleziona sensori:", labels, default=labels[:1] if labels else [])
-    
-    if sel_sens:
-        fig_trend = go.Figure()
-        for s_id in sel_sens:
-            idx = labels.index(s_id)
-            y_val = df_cp0.iloc[:, idx]
-            y_mm = y_val.rolling(window=5, center=True).mean()
-            fig_trend.add_trace(go.Scatter(x=time_col, y=y_mm, name=f"CL_{s_id} Media Mobile", mode='lines'))
-        
-        fig_trend.update_layout(xaxis=dict(title="Data"), yaxis=dict(title="mm"), template="plotly_white", height=450)
-        st.plotly_chart(fig_trend, use_container_width=True)
-
-# --- FUNZIONE PRINCIPALE PER IL MODULO ---
 def run_elettrolivelle():
-    st.header("📏 Monitoraggio Avanzato Elettrolivelle")
-    
-    # I parametri appaiono nella sidebar solo quando il modulo è attivo
-    st.sidebar.header("⚙️ Parametri Modulo")
-    file_input = st.sidebar.file_uploader("Carica Excel", type=['xlsx', 'xlsm'])
-    asse_sel = st.sidebar.selectbox("Asse di Analisi", ["X", "Y", "Z"])
-    l_barra = st.sidebar.number_input("Lunghezza Barra (mm)", value=3000)
-    sigma_val = st.sidebar.slider("Sigma Gauss", 1.0, 4.0, 2.0)
-    limit_val = st.sidebar.number_input("Limite Grafico (mm)", value=30.0)
-    vel_animazione = st.sidebar.slider("Velocità Video (ms)", 50, 1000, 200)
-
-    if file_input:
-        xls = pd.ExcelFile(file_input)
-        sheets = [s for s in xls.sheet_names if s not in ["ARRAY", "Info"] and not s.endswith(("C0", "C", "CP0"))]
-        tab1, tab2 = st.tabs(["📊 Analisi Dinamica", "🖨️ Report Word / Export"])
+    if os.path.exists("logo_dimos.jpg"):
+        st.image("logo_dimos.jpg", width=300)
         
-        with tab1:
-            sel_sheet = st.selectbox("Seleziona Layer", sheets)
-            df_full = pd.read_excel(file_input, sheet_name=sel_sheet)
-            time_col = pd.to_datetime(df_full['Data e Ora'])
-            sensor_cols = [c for c in df_full.columns if "CL_" in str(c) and f"_{asse_sel}" in str(c)]
+    st.title("📏 Modulo Elettrolivelle - Analisi Integrata")
+    
+    up = st.file_uploader("📂 Carica file Excel Elettrolivelle", type=['xlsx', 'xlsm'])
+    
+    if up:
+        xls = pd.ExcelFile(up)
+        sheets = [s for s in xls.sheet_names if s not in ["ARRAY", "NAME"]]
+        sel_sheet = st.selectbox("Seleziona Sezione", sheets)
+        
+        with st.sidebar:
+            st.header("🔧 Setup Algoritmo")
+            asse = st.selectbox("Asse di analisi", ["X", "Y", "Z"])
+            l_barra = st.number_input("Lunghezza Barra (mm)", value=3000)
+            sigma = st.slider("Filtro Sigma (Gauss)", 1.0, 5.0, 2.5)
             
-            if sensor_cols:
-                # Esecuzione algoritmo originale
-                df_cp0 = elaborazione_vba_completa(df_full[sensor_cols], l_barra, sigma_val)
-                labels = [re.search(r'CL_(\d+)', str(c)).group(1) for c in sensor_cols]
-                
-                # Visualizzazione animazione
-                color_matrix = precalcola_colori(df_cp0)
-                data_matrix = df_cp0.values
-                
-                fig_vid = go.Figure()
-                fig_vid.add_trace(go.Scatter(
-                    x=labels, y=data_matrix[0], mode='lines+markers+text',
-                    text=[f"{v:.2f}" if pd.notnull(v) else "" for v in data_matrix[0]],
-                    textposition="top center", marker=dict(size=12, color=color_matrix[0])
-                ))
-                fig_vid.update_layout(
-                    xaxis=dict(type='category', title="ID Sensore"),
-                    yaxis=dict(range=[-limit_val, limit_val], title="mm"),
-                    height=450, template="plotly_white",
-                    sliders=[{"active": 0, "steps": [{"method": "animate", "label": t.strftime('%d/%m/%Y %H:%M'), 
-                               "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": False}}]} 
-                              for i, t in enumerate(time_col)]}]
-                )
-                fig_vid.frames = genera_frames_animazione(data_matrix, color_matrix, labels)
-                st.plotly_chart(fig_vid, use_container_width=True)
-                
-                render_trend_analysis(df_cp0, time_col, labels)
+            st.divider()
+            st.header("📈 Visualizzazione")
+            tipo_grafico = st.radio("Tipo di calcolo", ["Spostamento Singolo", "Deformata Cumulata (Integrata)"])
+            vel = st.slider("Velocità Animazione (ms)", 50, 1000, 200)
+            limite_y = st.number_input("Range asse Y (+/- mm)", value=20.0)
+
+        df = pd.read_excel(up, sheet_name=sel_sheet)
+        time_col = pd.to_datetime(df.iloc[:, 0])
+        cols_asse = [c for c in df.columns if f"_{asse}" in str(c)]
+        
+        if cols_asse:
+            # 1. TRASFORMAZIONE VETTORIALE
+            data_raw = df[cols_asse].replace(0, np.nan).values
+            data_mm = l_barra * np.sin(np.radians(data_raw))
+            
+            # 2. CALCOLO DELTA C0 (rispetto alla prima riga valida)
+            first_valid = np.nanmean(data_mm[0:1, :], axis=0)
+            data_c0 = data_mm - first_valid
+            
+            # 3. FILTRO OUTLIERS GAUSS
+            m = np.nanmean(data_c0, axis=0)
+            s = np.nanstd(data_c0, axis=0)
+            data_c0[(data_c0 < m - sigma*s) | (data_c0 > m + sigma*s)] = np.nan
+            
+            # 4. CALCOLO DEFORMATA CUMULATA (Se selezionato)
+            if tipo_grafico == "Deformata Cumulata (Integrata)":
+                # Somma i mm di ogni sensore lungo la catena
+                plot_data = np.nancumsum(data_c0, axis=1)
             else:
-                st.error(f"Nessun sensore trovato per l'asse {asse_sel} in questo foglio.")
-    else:
-        st.info("Carica un file Excel dalla sidebar per iniziare l'elaborazione.")
+                plot_data = data_c0
+
+            ids = [re.search(r'CL_(\d+)', c).group(1) if "CL_" in c else c for c in cols_asse]
+
+            # 5. COSTRUZIONE GRAFICO PLOTLY
+            fig = go.Figure()
+            
+            # Aggiunta linea dello Zero
+            fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+
+            # Traccia iniziale (Tempo 0)
+            fig.add_trace(go.Scatter(
+                x=ids, 
+                y=plot_data[0], 
+                mode='lines+markers+text',
+                text=np.round(plot_data[0], 2), 
+                textposition="top center",
+                line=dict(color='#1f77b4', width=3),
+                marker=dict(size=10, color='red', symbol='square')
+            ))
+            
+            # Generazione Frames per animazione
+            frames = []
+            for i in range(len(plot_data)):
+                frames.append(go.Frame(
+                    data=[go.Scatter(y=plot_data[i], text=np.round(plot_data[i], 2))],
+                    name=str(i)
+                ))
+            
+            fig.frames = frames
+            
+            fig.update_layout(
+                title=f"{tipo_grafico} - Asse {asse}",
+                yaxis=dict(title="Spostamento (mm)", range=[-limite_y, limite_y]),
+                xaxis=dict(title="Posizione Sensori (Catena)"),
+                template="plotly_white",
+                updatemenus=[{
+                    "buttons": [
+                        {"args": [None, {"frame": {"duration": vel, "redraw": True}, "fromcurrent": True}],
+                         "label": "▶ Play", "method": "animate"},
+                        {"args": [[None], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+                         "label": "⏸ Pause", "method": "animate"}
+                    ],
+                    "type": "buttons", "direction": "left", "showactive": False, "x": 0.1, "y": 1.15
+                }],
+                sliders=[{
+                    "steps": [
+                        {"method": "animate", "label": time_col[i].strftime("%d/%m %H:%M"),
+                         "args": [[str(i)], {"frame": {"duration": vel, "redraw": True}}]} 
+                        for i in range(len(plot_data))
+                    ],
+                    "currentvalue": {"prefix": "Data: ", "font": {"size": 14}, "visible": True}
+                }]
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # 6. TABELLA MASSIMI (CON DOWNLOAD)
+            st.subheader("📋 Analisi Statistica Sensori")
+            res_df = pd.DataFrame({
+                "ID Sensore": ids,
+                "Spostamento Max (mm)": np.nanmax(plot_data, axis=0),
+                "Spostamento Min (mm)": np.nanmin(plot_data, axis=0),
+                "Ultima Lettura (mm)": plot_data[-1]
+            }).round(3)
+            
+            st.dataframe(res_df, use_container_width=True)
+            
+            csv = res_df.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Scarica Tabella CSV", csv, "riepilogo_livelle.csv", "text/csv")
+            
+        else:
+            st.error(f"⚠️ Attenzione: Nessuna colonna trovata con suffisso _{asse}. Controlla il nome dei sensori nell'Excel.")
