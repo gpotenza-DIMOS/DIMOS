@@ -31,12 +31,13 @@ def calcolo_deformata_fabro(df_values, l_barra, n_sigma, limit_val):
     stds = np.nanstd(data_cp0, axis=0)
     for j in range(data_cp0.shape[1]):
         m, s = means[j], stds[j]
-        mask = (data_cp0[:, j] < m - n_sigma*s) | (data_cp0[:, j] > m + n_sigma*s) | (np.isnan(data_cp0[:, j]))
-        data_cp0[mask, j] = m
+        if s > 0:
+            mask = (data_cp0[:, j] < m - n_sigma*s) | (data_cp0[:, j] > m + n_sigma*s) | (np.isnan(data_cp0[:, j]))
+            data_cp0[mask, j] = m
     return pd.DataFrame(data_cp0, index=df_values.index).ffill().fillna(0)
 
-# --- QUESTA È LA FUNZIONE CHE RICHIAMA app_DIMOS.py ---
-def run_elettrolivelle_advanced():
+# --- QUESTA È LA FUNZIONE RICHIAMATA DA app_DIMOS.py ---
+def run_elettrolivelle():
     st.markdown("### 📏 Analisi Deformate Elettrolivelle")
 
     with st.sidebar:
