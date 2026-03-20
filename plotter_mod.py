@@ -6,7 +6,7 @@ import re
 import os
 from io import BytesIO
 
-# --- GESTIONE LIBRERIA STAMPA ---
+# --- LIBRERIE STAMPA ---
 try:
     from docx import Document
     from docx.shared import Inches
@@ -22,7 +22,7 @@ def run_plotter():
         if os.path.exists("logo_dimos.jpg"): 
             st.image("logo_dimos.jpg", width=300)
     
-    st.header("📈 Plotter Avanzato: Selezione Multipla & Filtri Sigma")
+    st.header("📈 Report Analitico: Gauss, Zeri e Selezioni Multiple")
 
     file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="p_up")
     if not file_input: return
@@ -37,12 +37,10 @@ def run_plotter():
     use_gauss = st.sidebar.checkbox("Attiva Filtro Gauss (Sigma)", value=True)
     sigma_val = st.sidebar.number_input("Valore Sigma (Gauss)", min_value=1.0, max_value=5.0, value=2.0, step=0.1)
     
-    # Media Mobile (ammorbidimento dati come nel file ottimo)
-    use_rolling = st.sidebar.checkbox("Media Mobile (5 punti)", value=True)
-    
+    use_rolling = st.sidebar.checkbox("Media Mobile (Smooth)", value=True)
     grado_poly = st.sidebar.selectbox("Trend Polinomiale", [0, 2, 3, 4], format_func=lambda x: "OFF" if x==0 else f"Grado {x}")
 
-    # --- 1. MAPPATURA ANAGRAFICA (LAYER NAME) ---
+    # --- 1. MAPPATURA ANAGRAFICA ---
     anagrafica = {}
     df_name = pd.read_excel(xls, sheet_name="NAME", header=None) if "NAME" in xls.sheet_names else None
     
@@ -64,108 +62,100 @@ def run_plotter():
                     grandezza = col.split(web_v)[-1].lstrip('_').strip()
                     if not grandezza: grandezza = re.search(r'\[.*?\]', col).group(0)
                     break
-        if not dl: # Fallback se NAME non c'è
+        if not dl:
             dl = col.split(' ')[0]
-            unita = re.search(r'\[.*?\]', col).group(0) if '[' in col else ""
-            sens_f = col.replace(dl, "").replace(unita, "").strip()
-            sens = "_".join(sens_f.split('_')[:-1]) if '_' in sens_f else sens_f
-            grandezza = sens_f.split('_')[-1] + " " + unita if '_' in sens_f else unita
+            sens = col.split(' ')[1] if len(col.split(' ')) > 1 else "SENS"
+            grandezza = col.split(sens)[-1].strip()
 
         if dl not in anagrafica: anagrafica[dl] = {}
         if sens not in anagrafica[dl]: anagrafica[dl][sens] = {}
-        anagrafica[dl][sens][grandezza.strip()] = col
+        anagrafica[dl][sens][grandezza] = col
 
     # --- 2. FILTRI SELEZIONE MULTIPLA ---
     st.divider()
     t_min, t_max = df['Data e Ora'].min().to_pydatetime(), df['Data e Ora'].max().to_pydatetime()
-    sel_range = st.slider("Seleziona Intervallo Temporale", t_min, t_max, (t_min, t_max))
+    sel_range = st.slider("Intervallo Temporale", t_min, t_max, (t_min, t_max))
     df_f = df[(df['Data e Ora'] >= sel_range[0]) & (df['Data e Ora'] <= sel_range[1])].copy()
 
     c1, c2, c3 = st.columns(3)
-    with c1: 
-        sel_dls = st.multiselect("Datalogger", sorted(anagrafica.keys()))
-    
+    with c1: sel_dls = st.multiselect("Datalogger", sorted(anagrafica.keys()))
     list_s = [f"{d} | {s}" for d in sel_dls for s in anagrafica[d].keys()]
-    with c2: 
-        sel_sens_f = st.multiselect("Sensori", list_s)
-    
+    with c2: sel_sens_f = st.multiselect("Sensori", list_s)
     list_g = set()
     for item in sel_sens_f:
         d, s = item.split(" | ")
         list_g.update(anagrafica[d][s].keys())
-    with c3: 
-        sel_grands = st.multiselect("Grandezze Fisiche", sorted(list(list_g)))
+    with c3: sel_grands = st.multiselect("Grandezze Fisiche", sorted(list(list_g)))
 
-    # --- 3. LOGICA PULIZIA & GRAFICO ---
+    # --- 3. FUNZIONE DI PULIZIA (LOGICA OTTIMO) ---
+    def get_cleaned_series(col_name):
+        y = df_f[col_name].copy()
+        if clean_zeros: y = y.replace(0, np.nan)
+        if use_gauss and y.notna().sum() > 5:
+            m, std = y.mean(), y.std()
+            # Invece di cancellare, mascheriamo per l'interpolazione
+            y = y.mask(abs(y - m) > (sigma_val * std), np.nan)
+        if use_rolling:
+            y = y.rolling(window=5, center=True).mean()
+        return y.interpolate(method='linear', limit_direction='both')
+
+    # --- 4. GRAFICO ---
+    fig = go.Figure()
     if sel_sens_f and sel_grands:
-        fig = go.Figure()
         for item in sel_sens_f:
             d, s = item.split(" | ")
             for g in sel_grands:
                 if g in anagrafica[d][s]:
-                    col_raw = anagrafica[d][s][g]
-                    y = df_f[col_raw].copy()
+                    y_p = get_cleaned_series(anagrafica[d][s][g])
+                    fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y_p, name=f"{s} - {g}"))
                     
-                    # A. Rimozione Zeri
-                    if clean_zeros: 
-                        y = y.replace(0, np.nan)
-                    
-                    # B. Filtro Gauss (Sigma personalizzabile)
-                    if use_gauss and y.notna().sum() > 5:
-                        m, std = y.mean(), y.std()
-                        y = y.mask(abs(y - m) > (sigma_val * std), np.nan)
-                    
-                    # C. Media Mobile (Rolling 5)
-                    if use_rolling:
-                        y = y.rolling(window=5, center=True).mean()
-                    
-                    y = y.interpolate() 
-                    
-                    fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y, name=f"{s} - {g}"))
-                    
-                    # D. Trend Polinomiale
                     if grado_poly > 0:
-                        x_n = np.arange(len(y))
-                        valid = y.notna()
+                        x_n = np.arange(len(y_p))
+                        valid = y_p.notna()
                         if valid.any():
-                            p = np.poly1d(np.polyfit(x_n[valid], y[valid], grado_poly))
-                            fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=p(x_n), 
-                                                   name=f"Trend {s} {g}", line=dict(dash='dot')))
+                            p = np.poly1d(np.polyfit(x_n[valid], y_p[valid], grado_poly))
+                            fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=p(x_n), name=f"Trend {s} {g}", line=dict(dash='dot')))
 
-        fig.update_layout(template="plotly_white", height=750, hovermode="x unified",
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        fig.update_layout(template="plotly_white", height=700, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 4. STAMPE WORD (Una pagina per ogni sensore selezionato) ---
+        # --- 5. STAMPE (STESSA LOGICA DEL GRAFICO) ---
         st.divider()
-        if st.button("🚀 GENERA REPORT WORD"):
-            if DOCX_AVAILABLE:
-                doc = Document()
-                doc.add_heading('REPORT MONITORAGGIO DIMOS', 0)
-                
-                for item in sel_sens_f:
-                    d, s = item.split(" | ")
-                    doc.add_heading(f'Datalogger: {d} - Sensore: {s}', level=1)
+        st.subheader("🖨️ Esportazione Report")
+        col_btn1, col_btn2 = st.columns(2)
+        
+        with col_btn1:
+            if st.button("🚀 REPORT WORD (Grafico Corrente)"):
+                if DOCX_AVAILABLE:
+                    doc = Document()
+                    doc.add_heading('REPORT MONITORAGGIO DIMOS', 0)
+                    doc.add_paragraph(f"Analisi basata su filtro Gauss (Sigma: {sigma_val}) e rimozione zeri.")
                     
-                    # Creiamo il grafico specifico per il report
-                    fig_rep = go.Figure()
-                    for g in sel_grands:
-                        if g in anagrafica[d][s]:
-                            col_r = anagrafica[d][s][g]
-                            # Applichiamo pulizia anche per la stampa
-                            y_r = df_f[col_r].replace(0, np.nan)
-                            if use_gauss:
-                                m, std = y_r.mean(), y_r.std()
-                                y_r = y_r.mask(abs(y_r - m) > (sigma_val * std), np.nan)
-                            y_r = y_r.interpolate()
-                            
-                            fig_rep.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y_r, name=g))
+                    img_stream = BytesIO(pio.to_image(fig, format="png", width=1100, height=550))
+                    doc.add_picture(img_stream, width=Inches(6.3))
                     
-                    fig_rep.update_layout(width=1000, height=450, template="plotly_white")
-                    img_io = BytesIO(pio.to_image(fig_rep, format="png"))
-                    doc.add_picture(img_io, width=Inches(6.2))
-                    doc.add_page_break()
+                    doc.add_heading("Dettaglio Selezione:", level=2)
+                    for val in sel_sens_f: doc.add_paragraph(f"• {val}", style='List Bullet')
+                    
+                    target = BytesIO()
+                    doc.save(target)
+                    st.download_button("📥 Scarica Word", target.getvalue(), "Report_Gauss.docx")
 
-                buf = BytesIO()
-                doc.save(buf)
-                st.download_button("📥 Scarica Report Word", buf.getvalue(), "Report_Dimos_Plotter.docx")
+        with col_btn2:
+            if st.button("🚀 REPORT WORD (Dettagliato per Sensore)"):
+                if DOCX_AVAILABLE:
+                    doc = Document()
+                    doc.add_heading('REPORT DETTAGLIATO DIMOS', 0)
+                    for item in sel_sens_f:
+                        d, s = item.split(" | ")
+                        doc.add_heading(f"Sensore {s} - DL {d}", level=2)
+                        fig_s = go.Figure()
+                        for g in sel_grands:
+                            if g in anagrafica[d][s]:
+                                fig_s.add_trace(go.Scatter(x=df_f['Data e Ora'], y=get_cleaned_series(anagrafica[d][s][g]), name=g))
+                        img_s = BytesIO(pio.to_image(fig_s, format="png", width=900, height=400))
+                        doc.add_picture(img_s, width=Inches(6.0))
+                    
+                    target = BytesIO()
+                    doc.save(target)
+                    st.download_button("📥 Scarica Report Dettagliato", target.getvalue(), "Report_Dettaglio_Sensori.docx")
