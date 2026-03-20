@@ -1,110 +1,148 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+import re
 import os
-from io import BytesIO
-from docx import Document
-from docx.shared import Inches
-
-def pulisci_dato_vettoriale(serie, n_sigma, drop_zeros):
-    res = serie.copy()
-    counts = {"zeri": 0, "gauss": 0}
-    if drop_zeros:
-        counts["zeri"] = int((res == 0).sum())
-        res = res.replace(0, np.nan)
-    if n_sigma > 0:
-        m, s = res.mean(), res.std()
-        outliers = (res < m - n_sigma * s) | (res > m + n_sigma * s)
-        counts["gauss"] = int(outliers.sum())
-        res[outliers] = np.nan
-    return res, counts
 
 def run_plotter():
-    # Logo e Intestazione
-    if os.path.exists("logo_dimos.jpg"):
-        st.image("logo_dimos.jpg", width=350)
+    st.header("📈 Analisi Temporale e Grafici")
+
+    # Caricamento file (centrale come richiesto)
+    file_input = st.file_uploader("Carica Excel Monitoraggio (es. flegrei.xlsx)", type=['xlsx', 'xlsm'], key="plot_up")
+
+    if not file_input:
+        st.info("Carica un file Excel per iniziare l'analisi dei sensori.")
+        return
+
+    # Lettura Excel
+    xls = pd.ExcelFile(file_input)
     
-    st.title("📊 Analisi Grafica e Reportistica")
+    # --- GESTIONE ANAGRAFICA (Layer NAME) ---
+    mapping_sensori = {}
+    if "NAME" in xls.sheet_names:
+        df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
+        # Riga 1: Datalogger, Riga 2: Nome Sensore, Riga 3: Nome Web
+        for col in range(1, df_name.shape[1]):
+            dl_nome = str(df_name.iloc[0, col]).strip()
+            sens_nome = str(df_name.iloc[1, col]).strip()
+            web_nome = str(df_name.iloc[2, col]).strip()
+            if web_nome != "nan":
+                # Puliamo il nome web per il matching (es. rimuoviamo la grandezza se presente)
+                web_base = web_nome.split('[')[0].strip()
+                mapping_sensori[web_base] = {
+                    "label": f"{sens_nome} ({dl_nome})",
+                    "id_umano": sens_nome,
+                    "datalogger": dl_nome
+                }
+
+    # --- SELEZIONE LAYER DATI ---
+    sheets_dati = [s for s in xls.sheet_names if s != "NAME" and s != "ARRAY"]
+    sel_sheet = st.selectbox("Seleziona Foglio Dati", sheets_dati)
     
-    # CARICAMENTO FILE IN PAGINA PRINCIPALE (Come richiesto)
-    up = st.file_uploader("📂 Carica file (CSV, XLSX, XLSM)", type=['csv','xlsx','xlsm'], key="up_plotter")
+    df = pd.read_excel(xls, sheet_name=sel_sheet)
+    if 'Data e Ora' not in df.columns:
+        st.error("Colonna 'Data e Ora' non trovata.")
+        return
+
+    df['Data e Ora'] = pd.to_datetime(df['Data e Ora'])
     
-    if up:
-        # Caricamento e gestione foglio NAME
-        df_name = None
-        if up.name.endswith(('.xlsx', '.xlsm')):
-            xls = pd.ExcelFile(up)
-            if "NAME" in xls.sheet_names:
-                df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
-            sheet_dati = [s for s in xls.sheet_names if s not in ["NAME", "Info", "ARRAY"]][0]
-            df = pd.read_excel(xls, sheet_name=sheet_dati)
+    # --- ANALISI COLONNE E GRANDEZZE ---
+    # Cerchiamo colonne tipo: CO_9277 CL_01_X [°]
+    sensor_cols = [c for c in df.columns if '[' in str(c) and ']' in str(c)]
+    
+    anagrafica_colonne = []
+    for col in sensor_cols:
+        # Estrazione Grandezza: [mm], [°], [°C], ecc.
+        unita = re.search(r'\[(.*?)\]', col).group(0)
+        
+        # Estrazione Nome Web Base
+        # Es: "CO_9277 CL_01_X [°]" -> base: "CO_9277 CL_01"
+        # Es: "CO_9286 VAR5 [mm]" -> base: "CO_9286 VAR5"
+        nome_web_completo = col.split('[')[0].strip()
+        
+        # Gestione Multisensore (X, Y, Z, T1...)
+        # Se finisce con _X, _Y, _T1 ecc., lo identifichiamo
+        sub_param = ""
+        parts = nome_web_completo.split('_')
+        if parts[-1] in ['X', 'Y', 'Z', 'T1', 'T2', 'LI', 'LQ', 'LM']:
+            sub_param = parts[-1]
+            base_web = "_".join(parts[:-1]) # Rimuove l'ultimo pezzo (_X)
         else:
-            df = pd.read_csv(up, sep=None, engine='python')
+            base_web = nome_web_completo
+
+        # Associazione Nome Umano
+        info = mapping_sensori.get(base_web, {
+            "label": f"{base_web}",
+            "id_umano": base_web,
+            "datalogger": base_web.split(' ')[0] if ' ' in base_web else "DL_Generico"
+        })
+
+        anagrafica_colonne.append({
+            "col_originale": col,
+            "base_web": base_web,
+            "label_umana": info["label"],
+            "id_umano": info["id_umano"],
+            "parametro": sub_param if sub_param else "Dato",
+            "unita": unita
+        })
+
+    df_info = pd.DataFrame(anagrafica_colonne)
+
+    # --- UI DI SELEZIONE ---
+    st.divider()
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # 1. Scegli il Sensore (Nome Umano)
+        lista_sensori = df_info["label_umana"].unique()
+        sel_sens_label = st.selectbox("Seleziona Sensore", lista_sensori)
+    
+    with col2:
+        # 2. Scegli le Grandezze disponibili per quel sensore
+        mask = df_info["label_umana"] == sel_sens_label
+        opzioni_grandezze = df_info[mask]
         
-        col_t = df.columns[0]
-        df[col_t] = pd.to_datetime(df[col_t], dayfirst=True)
+        # Creiamo una label per il multiselect: "X [°]", "T1 [°C]" ecc.
+        opzioni_grandezze["select_label"] = opzioni_grandezze["parametro"] + " " + opzioni_grandezze["unita"]
         
-        # Sidebar con tutti i parametri "persi"
-        with st.sidebar:
-            st.header("🛠️ Parametri di Filtro")
-            sigma = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0)
-            no_zeros = st.checkbox("Rimuovi Zeri", value=True)
-            st.divider()
-            st.header("📈 Visualizzazione")
-            show_trend = st.checkbox("Linea di Tendenza (Polinomiale)", value=True)
-            y_min = st.number_input("Limite Minimo Asse Y", value=float(df.iloc[:,1:].min().min()))
-            y_max = st.number_input("Limite Massimo Asse Y", value=float(df.iloc[:,1:].max().max()))
+        sel_params = st.multiselect(
+            "Seleziona Grandezze da visualizzare",
+            options=opzioni_grandezze["select_label"].tolist(),
+            default=opzioni_grandezze["select_label"].tolist()[0]
+        )
 
-        # Mappatura nomi sensori
-        nodi = {}
-        for i, col in enumerate(df.columns[1:], 1):
-            label = str(df_name.iloc[1, i]) if df_name is not None else col
-            nodi[col] = label
-
-        sel = st.multiselect("Seleziona Sensori:", options=list(nodi.keys()), format_func=lambda x: nodi[x])
-
-        if sel:
-            fig = go.Figure()
-            for c in sel:
-                y_p, _ = pulisci_dato_vettoriale(df[c], sigma, no_zeros)
-                fig.add_trace(go.Scatter(x=df[col_t], y=y_p, name=nodi[c], mode='lines'))
+    # --- GENERAZIONE GRAFICO ---
+    if sel_params:
+        cols_to_plot = opzioni_grandezze[opzioni_grandezze["select_label"].isin(sel_params)]["col_originale"].tolist()
+        
+        fig = go.Figure()
+        
+        for c in cols_to_plot:
+            # Recuperiamo l'unità per il titolo asse Y
+            u_misura = df_info[df_info["col_originale"] == c]["unita"].values[0]
+            nome_traccia = df_info[df_info["col_originale"] == c]["select_label"].values[0]
             
-            fig.update_layout(template="plotly_white", yaxis=dict(range=[y_min, y_max]))
-            st.plotly_chart(fig, use_container_width=True)
+            fig.add_trace(go.Scatter(
+                x=df['Data e Ora'],
+                y=df[c],
+                name=f"{sel_sens_label} - {nome_traccia}",
+                mode='lines'
+            ))
 
-            # --- REPORT WORD (RIPRISTINATO E FUNZIONANTE) ---
-            if st.button("🚀 GENERA REPORT WORD"):
-                doc = Document()
-                doc.add_heading('Report Monitoraggio DIMOS', 0)
-                
-                for c in sel:
-                    y_p, diag = pulisci_dato_vettoriale(df[c], sigma, no_zeros)
-                    
-                    # Creazione grafico Matplotlib per Word
-                    plt.figure(figsize=(10, 5))
-                    plt.plot(df[col_t], y_p, label=nodi[c], color='blue')
-                    if show_trend:
-                        # Calcolo trend su dati puliti
-                        valid = ~np.isnan(y_p)
-                        z = np.polyfit(mdates.date2num(df[col_t][valid]), y_p[valid], 3)
-                        p = np.poly1d(z)
-                        plt.plot(df[col_t], p(mdates.date2num(df[col_t])), "r--", label="Trend")
-                    
-                    plt.title(f"Sensore: {nodi[c]}")
-                    plt.legend()
-                    plt.grid(True)
-                    
-                    buf = BytesIO()
-                    plt.savefig(buf, format='png')
-                    plt.close()
-                    
-                    doc.add_heading(f"Analisi {nodi[c]}", level=2)
-                    doc.add_paragraph(f"Filtri applicati: Gauss {sigma}σ, Zeri rimossi: {diag['zeri']}")
-                    doc.add_picture(buf, width=Inches(6))
-                
-                out = BytesIO()
-                doc.save(out)
-                st.download_button("⬇️ SCARICA DOCX", out.getvalue(), "Report.docx")
+        fig.update_layout(
+            template="plotly_white",
+            hovermode="x unified",
+            xaxis_title="Tempo",
+            yaxis_title=f"Valore ({u_misura})",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Tabella dati per controllo veloce
+        with st.expander("Visualizza Tabella Dati"):
+            st.dataframe(df[['Data e Ora'] + cols_to_plot].dropna())
+
+# Se eseguito come script principale
+if __name__ == "__main__":
+    run_plotter()
