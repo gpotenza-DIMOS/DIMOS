@@ -111,4 +111,42 @@ def run_plotter():
                     y_val, y_tr = process_and_trend(c_real)
                     
                     # Linea Dati
-                    fig.add_trace(go.Scatter
+                    fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y_val, name=f"{s} - {g}"))
+                    # Linea Trend
+                    if y_tr is not None:
+                        fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y_tr, 
+                                               name=f"Trend {s} ({g})", 
+                                               line=dict(dash='dash', width=2)))
+
+        fig.update_layout(template="plotly_white", height=700, hovermode="x unified",
+                          legend=dict(orientation="h", y=-0.2))
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- 7. STAMPE SPECULARI ---
+        st.divider()
+        st.subheader("💾 Produzione File di Stampa")
+        cw, ce = st.columns(2)
+
+        with cw:
+            if st.button("📝 PRODUCI REPORT WORD"):
+                doc = Document()
+                doc.add_heading('REPORT MONITORAGGIO DIMOS', 0)
+                doc.add_paragraph(f"Analisi con Trend Polinomiale Grado {grado_poly}")
+                img_io = BytesIO(pio.to_image(fig, format="png", width=1000, height=500))
+                doc.add_picture(img_io, width=Inches(6.2))
+                buf_w = BytesIO(); doc.save(buf_w)
+                st.download_button("📥 Scarica Word", buf_w.getvalue(), "Report.docx")
+
+        with ce:
+            if st.button("📊 PRODUCI EXCEL STAMPA"):
+                df_out = pd.DataFrame({'Data Ora': df_f['Data e Ora']})
+                for it in sel_sens:
+                    d, s = it.split(" | ")
+                    for g in sel_grands:
+                        if g in anagrafica[d][s]:
+                            y_v, y_t = process_and_trend(anagrafica[d][s][g])
+                            df_out[f"{s}_{g}"] = y_v
+                            if y_t is not None: df_out[f"Trend_{s}_{g}"] = y_t
+                buf_e = BytesIO()
+                df_out.to_excel(buf_e, index=False)
+                st.download_button("📥 Scarica Excel", buf_e.getvalue(), "Dati.xlsx")
