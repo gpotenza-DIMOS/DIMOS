@@ -5,121 +5,106 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os
-import re
-from datetime import datetime
 from io import BytesIO
+from docx import Document
+from docx.shared import Inches
 
-try:
-    from docx import Document
-    from docx.shared import Inches
-    WORD_OK = True
-except ImportError:
-    WORD_OK = False
-
-@st.cache_data(show_spinner=False)
-def carica_file_plotter(uploaded_file):
-    if uploaded_file.name.endswith(('.xlsx', '.xlsm')):
-        xls = pd.ExcelFile(uploaded_file)
-        df_name = pd.read_excel(xls, sheet_name="NAME", header=None) if "NAME" in xls.sheet_names else None
-        sheet_dati = [s for s in xls.sheet_names if s not in ["NAME", "Info", "ARRAY"]][0]
-        df_dati = pd.read_excel(xls, sheet_name=sheet_dati)
-    else:
-        df_dati = pd.read_csv(uploaded_file, sep=None, engine='python')
-        df_name = None
-    
-    col_t = df_dati.columns[0]
-    df_dati[col_t] = pd.to_datetime(df_dati[col_t], dayfirst=True, errors='coerce')
-    df_dati = df_dati.dropna(subset=[col_t]).sort_values(col_t)
-    return df_dati, df_name
-
-def pulisci_vettoriale(serie, n_sigma, drop_zeros):
+def pulisci_dato_vettoriale(serie, n_sigma, drop_zeros):
     res = serie.copy()
-    diag = {"zeri": 0, "gauss": 0}
+    counts = {"zeri": 0, "gauss": 0}
     if drop_zeros:
-        diag["zeri"] = int((res == 0).sum())
+        counts["zeri"] = int((res == 0).sum())
         res = res.replace(0, np.nan)
-    
     if n_sigma > 0:
         m, s = res.mean(), res.std()
         outliers = (res < m - n_sigma * s) | (res > m + n_sigma * s)
-        diag["gauss"] = int(outliers.sum())
+        counts["gauss"] = int(outliers.sum())
         res[outliers] = np.nan
-    return res, diag
+    return res, counts
 
 def run_plotter():
-    if os.path.exists("logo_dimos.jpg"): st.image("logo_dimos.jpg", width=400)
-    st.markdown("# 📊 Visualizzazione e Reportistica")
+    # Logo e Intestazione
+    if os.path.exists("logo_dimos.jpg"):
+        st.image("logo_dimos.jpg", width=350)
     
-    # Caricamento file in pagina principale
-    up = st.file_uploader("📂 Carica file dati (Excel/CSV)", type=['xlsx', 'xlsm', 'csv', 'txt'])
+    st.title("📊 Analisi Grafica e Reportistica")
     
-    with st.sidebar:
-        st.header("⚙️ Parametri Analisi")
-        sigma_val = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0)
-        rimuovi_zeri = st.checkbox("Ignora Valori Zero", value=True)
-        show_trend = st.checkbox("Mostra Trend (Polinomiale 3°)", value=True)
-        max_pts = st.number_input("Punti max grafico (Downsampling)", value=2000)
-
+    # CARICAMENTO FILE IN PAGINA PRINCIPALE (Come richiesto)
+    up = st.file_uploader("📂 Carica file (CSV, XLSX, XLSM)", type=['csv','xlsx','xlsm'], key="up_plotter")
+    
     if up:
-        df_dati, df_name = carica_file_plotter(up)
-        st.session_state['df_values'] = df_dati # Per modulo mappa
-        st.session_state['col_tempo'] = df_dati.columns[0]
+        # Caricamento e gestione foglio NAME
+        df_name = None
+        if up.name.endswith(('.xlsx', '.xlsm')):
+            xls = pd.ExcelFile(up)
+            if "NAME" in xls.sheet_names:
+                df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
+            sheet_dati = [s for s in xls.sheet_names if s not in ["NAME", "Info", "ARRAY"]][0]
+            df = pd.read_excel(xls, sheet_name=sheet_dati)
+        else:
+            df = pd.read_csv(up, sep=None, engine='python')
         
-        # Mapping Gerarchico (Ottimizzato)
-        gerarchia = {}
-        for i, col in enumerate(df_dati.columns[1:], 1):
-            # Logica di parsing nomi basata su file DIMOS standard
+        col_t = df.columns[0]
+        df[col_t] = pd.to_datetime(df[col_t], dayfirst=True)
+        
+        # Sidebar con tutti i parametri "persi"
+        with st.sidebar:
+            st.header("🛠️ Parametri di Filtro")
+            sigma = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 3.0)
+            no_zeros = st.checkbox("Rimuovi Zeri", value=True)
+            st.divider()
+            st.header("📈 Visualizzazione")
+            show_trend = st.checkbox("Linea di Tendenza (Polinomiale)", value=True)
+            y_min = st.number_input("Limite Minimo Asse Y", value=float(df.iloc[:,1:].min().min()))
+            y_max = st.number_input("Limite Massimo Asse Y", value=float(df.iloc[:,1:].max().max()))
+
+        # Mappatura nomi sensori
+        nodi = {}
+        for i, col in enumerate(df.columns[1:], 1):
             label = str(df_name.iloc[1, i]) if df_name is not None else col
-            gerarchia[col] = label
+            nodi[col] = label
 
-        sel_cols = st.multiselect("Seleziona Sensori da visualizzare:", options=list(gerarchia.keys()), format_func=lambda x: gerarchia[x])
+        sel = st.multiselect("Seleziona Sensori:", options=list(nodi.keys()), format_func=lambda x: nodi[x])
 
-        if sel_cols:
+        if sel:
             fig = go.Figure()
-            for c in sel_cols:
-                y_p, _ = pulisci_vettoriale(df_dati[c], sigma_val, rimuovi_zeri)
-                # Downsampling per fluidità
-                step = max(1, len(y_p) // max_pts)
-                fig.add_trace(go.Scatter(x=df_dati[df_dati.columns[0]][::step], y=y_p[::step], name=gerarchia[c]))
+            for c in sel:
+                y_p, _ = pulisci_dato_vettoriale(df[c], sigma, no_zeros)
+                fig.add_trace(go.Scatter(x=df[col_t], y=y_p, name=nodi[c], mode='lines'))
             
-            fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=-0.2))
+            fig.update_layout(template="plotly_white", yaxis=dict(range=[y_min, y_max]))
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- SEZIONE STAMPA WORD ---
-            st.divider()
-            if st.button("🚀 GENERA REPORT WORD COMPLETO") and WORD_OK:
+            # --- REPORT WORD (RIPRISTINATO E FUNZIONANTE) ---
+            if st.button("🚀 GENERA REPORT WORD"):
                 doc = Document()
                 doc.add_heading('Report Monitoraggio DIMOS', 0)
-                progress = st.progress(0)
                 
-                for idx, c in enumerate(sel_cols):
-                    y_c, diag = pulisci_vettoriale(df_dati[c], sigma_val, rimuovi_zeri)
-                    temp_df = pd.DataFrame({'T': df_dati[df_dati.columns[0]], 'V': y_c}).dropna()
+                for c in sel:
+                    y_p, diag = pulisci_dato_vettoriale(df[c], sigma, no_zeros)
                     
-                    if not temp_df.empty:
-                        plt.figure(figsize=(8, 4))
-                        plt.plot(temp_df['T'], temp_df['V'], label=gerarchia[c], color='#1f77b4', lw=1)
-                        if show_trend and len(temp_df) > 10:
-                            x_n = mdates.date2num(temp_df['T'])
-                            z = np.polyfit(x_n, temp_df['V'], 3)
-                            p = np.poly1d(z)
-                            plt.plot(temp_df['T'], p(x_n), "r--", alpha=0.8, label="Trend")
-                        
-                        plt.title(f"Sensore: {gerarchia[c]}")
-                        plt.grid(True, alpha=0.3)
-                        plt.legend()
-                        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%y'))
-                        
-                        buf = BytesIO()
-                        plt.savefig(buf, format='png', dpi=100)
-                        plt.close()
-                        buf.seek(0)
-                        
-                        doc.add_heading(f'Analisi: {gerarchia[c]}', level=2)
-                        doc.add_paragraph(f"Filtri: {diag['zeri']} zeri rimossi, {diag['gauss']} outliers (Gauss).")
-                        doc.add_picture(buf, width=Inches(6))
-                    progress.progress((idx + 1) / len(sel_cols))
+                    # Creazione grafico Matplotlib per Word
+                    plt.figure(figsize=(10, 5))
+                    plt.plot(df[col_t], y_p, label=nodi[c], color='blue')
+                    if show_trend:
+                        # Calcolo trend su dati puliti
+                        valid = ~np.isnan(y_p)
+                        z = np.polyfit(mdates.date2num(df[col_t][valid]), y_p[valid], 3)
+                        p = np.poly1d(z)
+                        plt.plot(df[col_t], p(mdates.date2num(df[col_t])), "r--", label="Trend")
+                    
+                    plt.title(f"Sensore: {nodi[c]}")
+                    plt.legend()
+                    plt.grid(True)
+                    
+                    buf = BytesIO()
+                    plt.savefig(buf, format='png')
+                    plt.close()
+                    
+                    doc.add_heading(f"Analisi {nodi[c]}", level=2)
+                    doc.add_paragraph(f"Filtri applicati: Gauss {sigma}σ, Zeri rimossi: {diag['zeri']}")
+                    doc.add_picture(buf, width=Inches(6))
                 
-                out_buf = BytesIO()
-                doc.save(out_buf)
-                st.download_button("⬇️ Scarica Report .docx", out_buf.getvalue(), "Report_DIMOS.docx")
+                out = BytesIO()
+                doc.save(out)
+                st.download_button("⬇️ SCARICA DOCX", out.getvalue(), "Report.docx")
