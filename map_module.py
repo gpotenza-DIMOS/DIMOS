@@ -1,90 +1,100 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from PIL import Image
+from geopy.geocoders import Nominatim
 import io
 
-def modulo_mappe_avanzato():
-    st.header("🗺️ Gestione Spaziale Sensori (GIS & Planimetrie)")
+def modulo_mappe_con_link_grafico(anagrafica_sensori):
+    st.subheader("🗺️ Mappe e Planimetrie Interattive")
     
-    tipo_mappa = st.radio("Seleziona Tipo Visualizzazione", ["Mappa Geografica (OSM)", "Planimetria Tecnica (CAD/Immagine)"])
+    # Inizializziamo lo stato della selezione se non esiste
+    if 'sensor_selected_from_map' not in st.session_state:
+        st.session_state.sensor_selected_from_map = []
 
-    if tipo_mappa == "Planimetria Tecnica (CAD/Immagine)":
-        st.subheader("📍 Posizionamento su Immagine")
+    tab_gis, tab_cad = st.tabs(["🌍 Mappa Geografica", "🖼️ Planimetria CAD"])
+
+    # --- 1. MAPPA GEOGRAFICA (Con correzione errore Foto) ---
+    with tab_gis:
+        col_s1, col_s2 = st.columns([2, 1])
+        with col_s1:
+            city = st.text_input("Cerca Località (es. Ancona)", key="city_search")
         
-        col1, col2 = st.columns([1, 3])
+        # FIX ERRORE FOTO: Controllo se location è None
+        lat_map, lon_map = 43.6158, 13.5189 # Default
+        if city:
+            try:
+                geolocator = Nominatim(user_agent="dimos_geo")
+                location = geolocator.geocode(city)
+                if location:
+                    lat_map, lon_map = location.latitude, location.longitude
+                else:
+                    st.warning(f"Località '{city}' non trovata. Uso posizione default.")
+            except:
+                st.error("Errore di connessione al servizio mappe.")
+
+        st.info("💡 Nota: Per la mappa geografica interattiva con click-to-graph, stiamo usando Plotly per permettere il link diretto ai dati.")
         
-        with col1:
-            img_file = st.file_uploader("1. Carica Planimetria (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
-            excel_coords = st.file_uploader("2. Carica Coordinate Sensori (Excel)", type=['xlsx'])
-            st.info("L'Excel deve avere le colonne: 'Nome', 'X', 'Y', 'Colore'")
+        # Simuliamo dei punti geografici dai sensori se hanno coordinate
+        # (Qui potresti caricare un excel con Nome, Lat, Lon)
+        fig_geo = go.Figure(go.Scattermapbox(
+            lat=[lat_map], lon=[lon_map],
+            mode='markers+text',
+            marker=dict(size=12, color='blue'),
+            text=["Centro Operativo"],
+            customdata=["NONE"], # ID per il click
+        ))
+        
+        fig_geo.update_layout(
+            mapbox=dict(style="open-street-map", center=dict(lat=lat_map, lon=lon_map), zoom=12),
+            margin=dict(l=0, r=0, t=0, b=0), height=500
+        )
+        st.plotly_chart(fig_geo, use_container_width=True)
+
+    # --- 2. PLANIMETRIA CAD (Click-to-Graph) ---
+    with tab_cad:
+        img_file = st.file_uploader("Carica Immagine CAD", type=['png', 'jpg'])
+        coord_file = st.file_uploader("Carica Excel Coordinate (Nome, X, Y)", type=['xlsx'])
+        
+        if img_file and coord_file:
+            img = Image.open(img_file)
+            w, h = img.size
+            df_coords = pd.read_excel(coord_file)
             
-            # Form per inserimento manuale/modifica veloce
-            with st.expander("Aggiungi/Modifica Sensore"):
-                new_name = st.text_input("Nome Sensore")
-                new_x = st.number_input("Coordinata X", value=0.0)
-                new_y = st.number_input("Coordinata Y", value=0.0)
-                new_color = st.color_picker("Colore Marker", "#FF0000")
+            fig_cad = go.Figure()
+            fig_cad.add_layout_image(dict(
+                source=img, xref="x", yref="y", x=0, y=h, sizex=w, sizey=h,
+                sizing="stretch", layer="below"
+            ))
+            
+            # Aggiungiamo i sensori come punti cliccabili
+            fig_cad.add_trace(go.Scatter(
+                x=df_coords['X'], y=df_coords['Y'],
+                mode='markers+text',
+                text=df_coords['Nome'],
+                marker=dict(size=15, color='red', symbol='diamond'),
+                customdata=df_coords['Nome'], # Questo serve per identificare quale sensore clicchi
+                name="Sensori"
+            ))
+            
+            fig_cad.update_xaxes(range=[0, w], showgrid=False)
+            fig_cad.update_yaxes(range=[0, h], showgrid=False, scaleanchor="x")
+            fig_cad.update_layout(width=1000, height=600, dragmode='drawpoint')
 
-        with col2:
-            if img_file:
-                img = Image.open(img_file)
-                w, h = img.size
-                
-                # Creiamo il contenitore per i sensori
-                fig = go.Figure()
+            # CATTURA IL CLICK
+            selected_points = st.plotly_chart(fig_cad, use_container_width=True, on_select="rerun")
+            
+            # Se l'utente clicca su un punto
+            if selected_points and "selection" in selected_points:
+                points = selected_points["selection"]["points"]
+                if points:
+                    sensor_clicked = points[0]["customdata"]
+                    st.session_state.sensor_selected_from_map = [sensor_clicked]
+                    st.success(f"✅ Sensore {sensor_clicked} selezionato! Vai alla sezione Grafici.")
 
-                # Carichiamo i dati dall'Excel se presente
-                df_points = pd.DataFrame(columns=['Nome', 'X', 'Y', 'Colore'])
-                if excel_coords:
-                    df_points = pd.read_excel(excel_coords)
-                
-                # Se l'utente ha compilato il form manuale, aggiungiamolo temporaneamente
-                if new_name:
-                    new_row = pd.DataFrame([{'Nome': new_name, 'X': new_x, 'Y': new_y, 'Colore': new_color}])
-                    df_points = pd.concat([df_points, new_row], ignore_index=True)
+    return st.session_state.sensor_selected_from_map
 
-                # Sfondo: l'immagine CAD
-                fig.add_layout_image(
-                    dict(
-                        source=img,
-                        xref="x", yref="y",
-                        x=0, y=h,
-                        sizex=w, sizey=h,
-                        sizing="stretch",
-                        layer="below"
-                    )
-                )
-
-                # Aggiungiamo i Marker (i sensori)
-                if not df_points.empty:
-                    fig.add_trace(go.Scatter(
-                        x=df_points['X'],
-                        y=df_points['Y'],
-                        mode='markers+text',
-                        marker=dict(size=14, color=df_points['Colore'] if 'Colore' in df_points else 'red', symbol='pentagon'),
-                        text=df_points['Nome'],
-                        textposition="top center",
-                        hovertemplate="<b>%{text}</b><br>X: %{x}<br>Y: %{y}<extra></extra>"
-                    ))
-
-                # Impostazioni assi per mantenere le proporzioni dell'immagine
-                fig.update_xaxes(showgrid=False, zeroline=False, range=[0, w])
-                fig.update_yaxes(showgrid=False, zeroline=False, range=[0, h], scaleanchor="x")
-                
-                fig.update_layout(
-                    width=900, height=700,
-                    margin=dict(l=0, r=0, t=0, b=0),
-                    dragmode='pan', # Permette di spostarsi nell'immagine
-                )
-
-                st.plotly_chart(fig, use_container_width=True)
-                st.caption("Usa la barra degli strumenti in alto a destra per zoomare o misurare le distanze.")
-
-    else:
-        st.subheader("🌍 Mappa Geografica Interattiva")
-        st.write("Qui integriamo la ricerca per città (Ancona) e i marker su coordinate reali.")
-        # (Qui inseriremo il codice Folium con ricerca Nominatim)
-
-# Chiamata alla funzione
-# modulo_mappe_avanzato()
+# --- INTEGRAZIONE NEL MAIN ---
+# Quando chiami la parte dei grafici, usa st.session_state.sensor_selected_from_map 
+# come valore di default nel multiselect dei sensori.
