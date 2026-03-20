@@ -3,146 +3,150 @@ import pandas as pd
 import plotly.graph_objects as go
 import re
 import os
+from io import BytesIO
+
+# Importiamo le librerie per Word come nel modulo elettrolivelle
+try:
+    from docx import Document
+    from docx.shared import Inches
+    import plotly.io as pio
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
 
 def run_plotter():
-    st.header("📈 Analisi Temporale e Grafici")
+    st.header("📈 Analisi e Reportistica Sensori")
 
-    # Caricamento file (centrale come richiesto)
-    file_input = st.file_uploader("Carica Excel Monitoraggio (es. flegrei.xlsx)", type=['xlsx', 'xlsm'], key="plot_up")
-
+    file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="pl_up")
     if not file_input:
-        st.info("Carica un file Excel per iniziare l'analisi dei sensori.")
+        st.info("Carica un file per iniziare.")
         return
 
-    # Lettura Excel
     xls = pd.ExcelFile(file_input)
     
-    # --- GESTIONE ANAGRAFICA (Layer NAME) ---
-    mapping_sensori = {}
+    # --- 1. COSTRUZIONE ANAGRAFICA GERARCHICA ---
+    # Struttura: { 'Datalogger': { 'Sensore': { 'Grandezza': 'NomeColonna' } } }
+    anagrafica = {}
+    
+    # Proviamo a leggere il foglio NAME
+    mapping_name = None
     if "NAME" in xls.sheet_names:
-        df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
-        # Riga 1: Datalogger, Riga 2: Nome Sensore, Riga 3: Nome Web
-        for col in range(1, df_name.shape[1]):
-            dl_nome = str(df_name.iloc[0, col]).strip()
-            sens_nome = str(df_name.iloc[1, col]).strip()
-            web_nome = str(df_name.iloc[2, col]).strip()
-            if web_nome != "nan":
-                # Puliamo il nome web per il matching (es. rimuoviamo la grandezza se presente)
-                web_base = web_nome.split('[')[0].strip()
-                mapping_sensori[web_base] = {
-                    "label": f"{sens_nome} ({dl_nome})",
-                    "id_umano": sens_nome,
-                    "datalogger": dl_nome
-                }
+        mapping_name = pd.read_excel(xls, sheet_name="NAME", header=None)
 
-    # --- SELEZIONE LAYER DATI ---
-    sheets_dati = [s for s in xls.sheet_names if s != "NAME" and s != "ARRAY"]
-    sel_sheet = st.selectbox("Seleziona Foglio Dati", sheets_dati)
-    
+    # Identifichiamo il foglio dati (flegrei o simile)
+    sheets_dati = [s for s in xls.sheet_names if s not in ["NAME", "ARRAY", "Info"]]
+    sel_sheet = st.selectbox("Seleziona Layer Dati", sheets_dati)
     df = pd.read_excel(xls, sheet_name=sel_sheet)
+    df.columns = [str(c).strip() for c in df.columns]
+    
     if 'Data e Ora' not in df.columns:
-        st.error("Colonna 'Data e Ora' non trovata.")
+        st.error("Colonna 'Data e Ora' mancante.")
         return
-
-    df['Data e Ora'] = pd.to_datetime(df['Data e Ora'])
     
-    # --- ANALISI COLONNE E GRANDEZZE ---
-    # Cerchiamo colonne tipo: CO_9277 CL_01_X [°]
-    sensor_cols = [c for c in df.columns if '[' in str(c) and ']' in str(c)]
+    time_col = pd.to_datetime(df['Data e Ora'])
+
+    # Analisi colonne per popolare l'anagrafica
+    cols_sensori = [c for c in df.columns if '[' in c]
     
-    anagrafica_colonne = []
-    for col in sensor_cols:
-        # Estrazione Grandezza: [mm], [°], [°C], ecc.
-        unita = re.search(r'\[(.*?)\]', col).group(0)
+    for col in cols_sensori:
+        datalogger, sensore, grandezza = "Generico", "Ignoto", col
         
-        # Estrazione Nome Web Base
-        # Es: "CO_9277 CL_01_X [°]" -> base: "CO_9277 CL_01"
-        # Es: "CO_9286 VAR5 [mm]" -> base: "CO_9286 VAR5"
-        nome_web_completo = col.split('[')[0].strip()
-        
-        # Gestione Multisensore (X, Y, Z, T1...)
-        # Se finisce con _X, _Y, _T1 ecc., lo identifichiamo
-        sub_param = ""
-        parts = nome_web_completo.split('_')
-        if parts[-1] in ['X', 'Y', 'Z', 'T1', 'T2', 'LI', 'LQ', 'LM']:
-            sub_param = parts[-1]
-            base_web = "_".join(parts[:-1]) # Rimuove l'ultimo pezzo (_X)
-        else:
-            base_web = nome_web_completo
-
-        # Associazione Nome Umano
-        info = mapping_sensori.get(base_web, {
-            "label": f"{base_web}",
-            "id_umano": base_web,
-            "datalogger": base_web.split(' ')[0] if ' ' in base_web else "DL_Generico"
-        })
-
-        anagrafica_colonne.append({
-            "col_originale": col,
-            "base_web": base_web,
-            "label_umana": info["label"],
-            "id_umano": info["id_umano"],
-            "parametro": sub_param if sub_param else "Dato",
-            "unita": unita
-        })
-
-    df_info = pd.DataFrame(anagrafica_colonne)
-
-    # --- UI DI SELEZIONE ---
-    st.divider()
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # 1. Scegli il Sensore (Nome Umano)
-        lista_sensori = df_info["label_umana"].unique()
-        sel_sens_label = st.selectbox("Seleziona Sensore", lista_sensori)
-    
-    with col2:
-        # 2. Scegli le Grandezze disponibili per quel sensore
-        mask = df_info["label_umana"] == sel_sens_label
-        opzioni_grandezze = df_info[mask]
-        
-        # Creiamo una label per il multiselect: "X [°]", "T1 [°C]" ecc.
-        opzioni_grandezze["select_label"] = opzioni_grandezze["parametro"] + " " + opzioni_grandezze["unita"]
-        
-        sel_params = st.multiselect(
-            "Seleziona Grandezze da visualizzare",
-            options=opzioni_grandezze["select_label"].tolist(),
-            default=opzioni_grandezze["select_label"].tolist()[0]
-        )
-
-    # --- GENERAZIONE GRAFICO ---
-    if sel_params:
-        cols_to_plot = opzioni_grandezze[opzioni_grandezze["select_label"].isin(sel_params)]["col_originale"].tolist()
-        
-        fig = go.Figure()
-        
-        for c in cols_to_plot:
-            # Recuperiamo l'unità per il titolo asse Y
-            u_misura = df_info[df_info["col_originale"] == c]["unita"].values[0]
-            nome_traccia = df_info[df_info["col_originale"] == c]["select_label"].values[0]
+        # Caso A: C'è il foglio NAME per la mappatura
+        if mapping_name is not None:
+            # Cerchiamo la colonna nel foglio NAME che corrisponde al nome web in riga 3
+            match_col = None
+            for c_idx in range(1, mapping_name.shape[1]):
+                if str(mapping_name.iloc[2, c_idx]).strip() in col:
+                    match_col = c_idx
+                    break
             
-            fig.add_trace(go.Scatter(
-                x=df['Data e Ora'],
-                y=df[c],
-                name=f"{sel_sens_label} - {nome_traccia}",
-                mode='lines'
-            ))
-
-        fig.update_layout(
-            template="plotly_white",
-            hovermode="x unified",
-            xaxis_title="Tempo",
-            yaxis_title=f"Valore ({u_misura})",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
+            if match_col:
+                datalogger = str(mapping_name.iloc[0, match_col]).strip()
+                sensore = str(mapping_name.iloc[1, match_col]).strip()
         
-        # Tabella dati per controllo veloce
-        with st.expander("Visualizza Tabella Dati"):
-            st.dataframe(df[['Data e Ora'] + cols_to_plot].dropna())
+        # Caso B: Non c'è NAME o non c'è match -> Estrazione da stringa web
+        # "CO_9277 CL_01_X [°]" -> DL: CO_9277, SENS: CL_01, PARAM: X [°]
+        if datalogger == "Generico":
+            parts = col.split(' ')
+            datalogger = parts[0]
+            # Cerchiamo l'unita tra parentesi
+            unita = re.search(r'\[(.*?)\]', col).group(0) if '[' in col else ""
+            # Il resto è il nome sensore + parametro
+            sens_web = col.replace(datalogger, "").replace(unita, "").strip()
+            # Gestione multisensore: CL_01_X -> Sensore CL_01, Parametro X
+            if '_' in sens_web:
+                s_parts = sens_web.split('_')
+                sensore = "_".join(s_parts[:-1]) if len(s_parts) > 1 else s_parts[0]
+            else:
+                sensore = sens_web
 
-# Se eseguito come script principale
-if __name__ == "__main__":
-    run_plotter()
+        grandezza = col.split(sensore)[-1].strip() if sensore in col else col
+        
+        # Popolamento dizionario
+        if datalogger not in anagrafica: anagrafica[datalogger] = {}
+        if sensore not in anagrafica[datalogger]: anagrafica[datalogger][sensore] = {}
+        anagrafica[datalogger][sensore][grandezza] = col
+
+    # --- 2. INTERFACCIA DI SELEZIONE A CASCATA ---
+    st.divider()
+    t1, t2 = st.tabs(["📊 Visualizzazione", "🖨️ Report Word"])
+
+    with t1:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            sel_dl = st.selectbox("1. Seleziona Datalogger", sorted(anagrafica.keys()))
+        with c2:
+            sel_sens = st.selectbox("2. Seleziona Sensore", sorted(anagrafica[sel_dl].keys()))
+        with c3:
+            # Qui l'utente sceglie i parametri (X, Y, T1...)
+            opzioni_grandezze = anagrafica[sel_dl][sel_sens]
+            sel_grands = st.multiselect("3. Grandezze Fisiche", list(opzioni_grandezze.keys()), default=list(opzioni_grandezze.keys())[0])
+
+        if sel_grands:
+            fig = go.Figure()
+            for g in sel_grands:
+                col_name = opzioni_grandezze[g]
+                fig.add_trace(go.Scatter(x=time_col, y=df[col_name], name=f"{sel_sens} - {g}"))
+            
+            fig.update_layout(
+                title=f"Trend {sel_sens} ({sel_dl})",
+                xaxis_title="Tempo",
+                template="plotly_white",
+                hovermode="x unified"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with t2:
+        st.subheader("Generazione Report Professionale")
+        dl_report = st.multiselect("Seleziona Datalogger per Report", sorted(anagrafica.keys()))
+        
+        if st.button("🚀 GENERA DOCUMENTO WORD"):
+            if not DOCX_AVAILABLE:
+                st.error("Libreria docx non trovata.")
+            else:
+                doc = Document()
+                doc.add_heading('REPORT MONITORAGGIO SENSORI', 0)
+                
+                for dl in dl_report:
+                    doc.add_heading(f'DATALOGGER: {dl}', level=1)
+                    for sens in anagrafica[dl]:
+                        doc.add_heading(f'Sensore: {sens}', level=2)
+                        
+                        # Creiamo un grafico per ogni sensore con tutte le sue grandezze
+                        fig_r = go.Figure()
+                        for g_label, col_data in anagrafica[dl][sens].items():
+                            fig_r.add_trace(go.Scatter(x=time_col, y=df[col_data], name=g_label))
+                        
+                        fig_r.update_layout(title=f"Andamento {sens}", width=800, height=400)
+                        
+                        # Salvataggio immagine per Word
+                        img_io = BytesIO(pio.to_image(fig_r, format="png"))
+                        doc.add_picture(img_io, width=Inches(6))
+                        doc.add_paragraph(f"Dati estratti dal foglio {sel_sheet}")
+                
+                target = BytesIO()
+                doc.save(target)
+                st.download_button("📥 Scarica Report", target.getvalue(), "Report_Sensori.docx")
+
+# Inserisci nel main:
+# if page == "pl": run_plotter()
