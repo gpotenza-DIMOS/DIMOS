@@ -12,7 +12,7 @@ from io import BytesIO
 
 CONFIG_FILE = "mac_positions.json"
 
-# --- FUNZIONI DI SERVIZIO ---
+# --- FUNZIONI DI SERVIZIO (TUE) ---
 def load_mac():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -24,54 +24,72 @@ def save_mac(data):
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
+def get_coords(city_name):
+    try:
+        url = f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1"
+        headers = {'User-Agent': 'DIMOS_MAC_DASHBOARD'}
+        response = requests.get(url, headers=headers).json()
+        if response: return float(response[0]['lat']), float(response[0]['lon'])
+    except: return None
+    return None
+
 # --- MODULO PRINCIPALE ---
 def run_map_manager():
-    st.header("🌍 Dashboard MAC - Gestione Mappa")
+    st.header("🌍 Dashboard MAC - Controllo Integrato")
 
-    # 1. CARICAMENTO EXCEL (Sempre accessibile)
-    with st.expander("📂 Carica o Cambia File Excel (Foglio NAME)", expanded=True):
-        file_input = st.file_uploader("Trascina qui il file Excel", type=['xlsx', 'xlsm'], key="map_excel_loader")
-        if file_input:
-            try:
-                xls = pd.ExcelFile(file_input)
-                if "NAME" in xls.sheet_names:
-                    df_n = pd.read_excel(xls, sheet_name="NAME", header=None).fillna("")
-                    ana = {}
-                    for c in range(1, df_n.shape[1]):
-                        dl = str(df_n.iloc[0, c]).strip()
-                        sn = str(df_n.iloc[1, c]).strip()
-                        try:
-                            la = float(df_n.iloc[3, c]); lo = float(df_n.iloc[4, c])
-                        except: la, lo = None, None
-                        if dl not in ana: ana[dl] = {}
-                        ana[dl][sn] = {"lat": la, "lon": lo}
-                    st.session_state['anagrafica'] = ana
-                    st.success("✅ File caricato con successo!")
-            except Exception as e:
-                st.error(f"Errore nella lettura del file: {e}")
-
-    # Controllo se ci sono dati, altrimenti mi fermo qui senza dare errori
+    # 1. RECUPERO DATI (Con opzione di Reset per caricare nuovi file)
     if 'anagrafica' not in st.session_state:
-        st.info("Inizia caricando un file Excel sopra.")
+        st.warning("⚠️ Nessun dato caricato. Carica l'Excel per attivare la mappa.")
+        file_input = st.file_uploader("📂 Carica Excel Monitoraggio (Foglio NAME)", type=['xlsx', 'xlsm'])
+        if file_input:
+            xls = pd.ExcelFile(file_input)
+            if "NAME" in xls.sheet_names:
+                df_n = pd.read_excel(xls, sheet_name="NAME", header=None).fillna("")
+                ana = {}
+                for c in range(1, df_n.shape[1]):
+                    dl = str(df_n.iloc[0, c]).strip()
+                    sn = str(df_n.iloc[1, c]).strip()
+                    try:
+                        la = float(df_n.iloc[3, c]) if df_n.iloc[3, c] != "" else None
+                        lo = float(df_n.iloc[4, c]) if df_n.iloc[4, c] != "" else None
+                    except: la, lo = None, None
+                    if dl not in ana: ana[dl] = {}
+                    ana[dl][sn] = {"lat": la, "lon": lo}
+                st.session_state['anagrafica'] = ana
+                st.rerun()
         return
+
+    # Tasto per poter caricare un altro file Excel
+    if st.sidebar.button("🔄 Carica un altro Excel"):
+        del st.session_state['anagrafica']
+        st.rerun()
 
     ana = st.session_state['anagrafica']
     punti_salvati = load_mac()
 
-    # --- 2. CONTROLLI PLANIMETRIA E SENSORI ---
+    # --- 2. PANNELLO DI CONTROLLO (Integrazione Immagine) ---
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+        
         with c1:
-            sel_dls = st.multiselect("📡 Datalogger", sorted(ana.keys()), default=sorted(ana.keys()))
-            opzioni = [f"{d} | {s}" for d in sel_dls for s in ana[d].keys()]
-            target_selection = st.selectbox("🎯 Seleziona Sensore", opzioni)
+            sel_dls = st.multiselect("📡 Filtra Datalogger", sorted(ana.keys()), default=sorted(ana.keys()))
+            opzioni_sensori = [f"{d} | {s}" for d in sel_dls for s in ana[d].keys()]
+            target_selection = st.selectbox("🎯 Seleziona Sensore da Posizionare", opzioni_sensori)
+        
         with c2:
-            up_img = st.file_uploader("🖼️ Carica Planimetria", type=['png', 'jpg', 'jpeg'])
+            up_img = st.file_uploader("🖼️ Planimetria (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
+        
         with c3:
-            sc = st.number_input("Scala Planimetria", value=0.002, format="%.5f", step=0.0001)
+            sc = st.number_input("Scala Planimetria", value=0.0010, format="%.5f", step=0.0001)
             rot = st.slider("Rotazione (°)", -180, 180, 0)
+            
         with c4:
-            opac = st.slider("Trasp.", 0.0, 1.0, 0.5)
+            st.write("")
+            if st.button("📥 Importa da Excel", use_container_width=True):
+                nuovi = [{"nome": s, "lat": c['lat'], "lon": c['lon'], "dl": d} 
+                         for d in ana for s, c in ana[d].items() if c['lat']]
+                save_mac(nuovi)
+                st.rerun()
 
     # --- 3. GESTIONE MAPPA ---
     if 'center' not in st.session_state:
@@ -79,7 +97,7 @@ def run_map_manager():
 
     m = folium.Map(location=st.session_state.center, zoom_start=18)
     
-    # Overlay Planimetria (Se presente)
+    # Overlay Immagine (se presente)
     if up_img:
         try:
             img = Image.open(up_img).convert("RGBA")
@@ -89,35 +107,39 @@ def run_map_manager():
             img.save(buf, format="PNG")
             img_b64 = base64.b64encode(buf.getvalue()).decode()
             lat, lon = st.session_state.center
+            # Bounds calcolati sulla scala inserita
             b = [[lat - sc, lon - sc*1.5], [lat + sc, lon + sc*1.5]]
-            ImageOverlay(image=f"data:image/png;base64,{img_b64}", bounds=b, opacity=opac, zindex=1).add_to(m)
+            ImageOverlay(image=f"data:image/png;base64,{img_b64}", bounds=b, opacity=0.6, zindex=1).add_to(m)
         except:
-            st.warning("Problema nel rendering dell'immagine.")
+            st.error("Errore nel caricamento dell'immagine")
 
-    # Disegno Marker
+    # Visualizza i sensori salvati
     for p in punti_salvati:
         is_sel = target_selection and p['nome'] in target_selection
-        folium.Marker([p['lat'], p['lon']], tooltip=p['nome'],
-                      icon=folium.Icon(color='blue' if is_sel else 'red')).add_to(m)
+        folium.Marker(
+            [p['lat'], p['lon']], 
+            popup=f"DL: {p.get('dl','?')}<br>SN: {p['nome']}", 
+            tooltip=p['nome'],
+            icon=folium.Icon(color='blue' if is_sel else 'red', icon='info-sign')
+        ).add_to(m)
 
-    # --- 4. RENDER E CLICK (FIXED) ---
-    output = st_folium(m, width=1300, height=600, key="mac_v_final_stable")
+    # Render mappa con protezione per il click (uso .get per evitare il KeyError)
+    output = st_folium(m, width=1300, height=600, key="mac_main_dashboard")
 
-    # Uso .get() per evitare il KeyError che ti bloccava
-    click_data = output.get("last_clicked")
-    if click_data:
-        if target_selection and " | " in target_selection:
+    # --- 4. SALVATAGGIO AL CLICK ---
+    if output and output.get("last_clicked"):
+        lat_c = output["last_clicked"]["lat"]
+        lon_c = output["last_clicked"]["lng"]
+        
+        if target_selection:
             dl_puro, nome_puro = target_selection.split(" | ")
             punti_salvati = [p for p in punti_salvati if p['nome'] != nome_puro]
-            punti_salvati.append({
-                "nome": nome_puro, 
-                "lat": click_data["lat"], 
-                "lon": click_data["lng"], 
-                "dl": dl_puro
-            })
+            punti_salvati.append({"nome": nome_puro, "lat": lat_c, "lon": lon_c, "dl": dl_puro})
             save_mac(punti_salvati)
             st.rerun()
 
+    # --- 5. FOOTER DATI ---
     if punti_salvati:
-        with st.expander("📄 Tabella Sensori Salvati"):
+        with st.expander("📄 Visualizza Tabella Coordinate"):
             st.dataframe(pd.DataFrame(punti_salvati), use_container_width=True)
+            if st.button("🗑️ Reset Mappa"): save_mac([]); st.rerun()
