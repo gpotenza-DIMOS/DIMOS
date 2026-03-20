@@ -9,6 +9,7 @@ from streamlit_folium import st_folium
 from PIL import Image
 from io import BytesIO
 import base64
+from folium.plugins import ImageOverlay
 
 CONFIG_FILE = "mac_positions.json"
 
@@ -58,7 +59,7 @@ def parse_excel(file):
 
 # ----------------- MAIN -----------------
 def run_map_manager():
-    st.title("🌍 Dashboard MAC Interattiva con Overlay Manipolabile")
+    st.title("🌍 Dashboard MAC Interattiva")
 
     # ---------- GESTIONE EXCEL ----------
     with st.expander("📂 Carica o Cambia Excel", expanded='anagrafica' not in st.session_state):
@@ -95,6 +96,13 @@ def run_map_manager():
     with col3:
         target = st.selectbox("🎯 Sensore da posizionare", sensori_filtrati)
 
+    # ---------- OVERLAY PLANIMETRIA ----------
+    with st.expander("🖼️ Overlay Planimetria"):
+        up_img = st.file_uploader("Carica immagine", type=['png','jpg','jpeg'])
+        scale_slider = st.slider("Scala", 0.0001, 0.02, 0.002, 0.0001)
+        rotation_slider = st.slider("Rotazione (°)", -180, 180, 0)
+        opacity_slider = st.slider("Trasparenza", 0.0, 1.0, 0.5)
+
     # ---------- CENTRO MAPPA ----------
     if 'center' not in st.session_state:
         if punti_salvati:
@@ -110,37 +118,53 @@ def run_map_manager():
 
     m = folium.Map(location=st.session_state.center, zoom_start=18)
 
-    # ---------- OVERLAY IMAGE INTERATTIVO TRASFORMABILE ----------
-    up_img = st.file_uploader("🖼️ Carica immagine da manipolare", type=['png','jpg','jpeg'])
+    # ---------- OVERLAY IMAGE TRASCINABILE ----------
     if up_img:
         img = Image.open(up_img).convert("RGBA")
+        w, h = img.size
+        aspect_ratio = h / w
+        if rotation_slider != 0:
+            img = img.rotate(-rotation_slider, expand=True)
         buf = BytesIO()
         img.save(buf, format="PNG")
         b64_img = base64.b64encode(buf.getvalue()).decode()
 
         lat, lon = st.session_state.center
+        height = scale_slider * aspect_ratio
+        bounds = [[lat - height, lon - scale_slider], [lat + height, lon + scale_slider]]
 
-        # Inseriamo il plugin Leaflet.DistortableImage
-        plugin_css = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.distortableimage/dist/leaflet.distortableimage.css"/>'
-        plugin_js  = '<script src="https://cdn.jsdelivr.net/npm/leaflet.distortableimage/dist/leaflet.distortableimage.js"></script>'
-        m.get_root().html.add_child(folium.Element(plugin_css + plugin_js))
+        overlay = ImageOverlay(image=f"data:image/png;base64,{b64_img}", bounds=bounds, opacity=opacity_slider)
+        overlay.add_to(m)
 
-        img_js = f"""
+        # JS minimo per rendere overlay trascinabile
+        draggable_js = f"""
         <script>
-        var imgUrl = "data:image/png;base64,{b64_img}";
-        var bounds = [[{lat-0.002},{lon-0.002}], [{lat+0.002},{lon+0.002}]];
-        var imgOverlay = L.distortableImageOverlay(imgUrl, {{
-            corners: [
-                bounds[0],
-                [bounds[0][0], bounds[1][1]],
-                bounds[1],
-                [bounds[1][0], bounds[0][1]]
-            ]
-        }}).addTo({{map}});
-        imgOverlay.editing.enable();
+        var overlay = {overlay.get_name()};
+        overlay.on('add', function() {{
+            overlay.getElement().style.cursor = 'move';
+            L.DomEvent.on(overlay.getElement(), 'mousedown', function(e) {{
+                var map = overlay._map;
+                var startLat = e.latlng.lat;
+                var startLng = e.latlng.lng;
+                function moveHandler(event) {{
+                    var deltaLat = event.latlng.lat - startLat;
+                    var deltaLng = event.latlng.lng - startLng;
+                    var b = overlay.getBounds();
+                    var newBounds = [
+                        [b.getSouthWest().lat + deltaLat, b.getSouthWest().lng + deltaLng],
+                        [b.getNorthEast().lat + deltaLat, b.getNorthEast().lng + deltaLng]
+                    ];
+                    overlay.setBounds(newBounds);
+                    startLat = event.latlng.lat;
+                    startLng = event.latlng.lng;
+                }}
+                map.on('mousemove', moveHandler);
+                map.once('mouseup', function(){{ map.off('mousemove', moveHandler); }});
+            }});
+        }});
         </script>
         """
-        m.get_root().html.add_child(folium.Element(img_js.replace("{map}", m.get_name())))
+        m.get_root().html.add_child(folium.Element(draggable_js))
 
     # ---------- MARKER CON NOME ----------
     for p in punti_salvati:
@@ -148,7 +172,8 @@ def run_map_manager():
         is_visible = nome_full in sensori_visibili
         is_selected = target == nome_full
         if is_visible:
-            folium.Marker([p['lat'], p['lon']], icon=folium.Icon(color='blue' if is_selected else 'red'),
+            folium.Marker([p['lat'], p['lon']],
+                          icon=folium.Icon(color='blue' if is_selected else 'red'),
                           tooltip=p['nome']).add_to(m)
             folium.map.Marker([p['lat'], p['lon']],
                               icon=DivIcon(icon_size=(150,36), icon_anchor=(0,0),
