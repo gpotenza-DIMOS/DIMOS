@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import os
 import re
+from datetime import datetime, timedelta
 from io import BytesIO
 
 # --- GESTIONE LIBRERIA STAMPA ---
@@ -15,66 +16,87 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
 
-# --- LOGICA SMART INTERPOLATION (MEDIA MOVIBILE + SIGMA) ---
-def ricostruisci_dato_smart(serie, index_attuale, window=50):
-    if not np.isnan(serie[index_attuale]):
-        return serie[index_attuale], False
+# --- LOGICA VBA: PULIZIA E SOGLIE ---
+def elaborazione_vba_style(df_values, l_barra, n_sigma):
+    # 1. Bonifica Zeri (VBA: If cella.Value = 0 Then ClearContents)
+    data = df_values.replace(0, np.nan).values
     
-    start = max(0, index_attuale - window)
-    finestra = serie[start:index_attuale]
-    finestra_valida = finestra[~np.isnan(finestra)]
+    # 2. Conversione Trigonometrica (VBA: L * Sin(v * PI / 180))
+    data_mm = l_barra * np.sin(np.radians(data))
     
-    if len(finestra_valida) < 5:
-        return np.nan, False
+    # 3. Calcolo C0 (Delta rispetto alla prima lettura valida riga 2 del VBA)
+    # Cerchiamo la prima riga non completamente nulla per ogni colonna
+    first_valid = np.nanmean(data_mm[0:1, :], axis=0)
+    data_c0 = data_mm - first_valid
     
-    m = np.mean(finestra_valida)
-    s = np.std(finestra_valida)
-    dati_ottimali = finestra_valida[(finestra_valida >= m - s) & (finestra_valida <= m + s)]
+    # 4. Pulizia Gauss 2 Sigma (VBA: RiordinaEGeneraLayerX)
+    report = []
+    tot_punti = data_c0.size
+    punti_corretti_gauss = 0
     
-    if len(dati_ottimali) > 0:
-        return np.mean(dati_ottimali), True
-    return np.nan, False
+    m_vec = np.nanmean(data_c0, axis=0)
+    s_vec = np.nanstd(data_c0, axis=0)
+    
+    for j in range(data_c0.shape[1]):
+        mask = np.abs(data_c0[:, j] - m_vec[j]) > (s_vec[j] * n_sigma)
+        punti_corretti_gauss += np.sum(mask)
+        data_c0[mask, j] = np.nan # VBA metteva la media, noi mettiamo NaN per Smart Interp
+        
+    # 5. Soglie Hard (VBA: +20 / -30)
+    mask_soglie = (data_c0 > 20) | (data_c0 < -30)
+    punti_eliminati_soglie = np.sum(mask_soglie)
+    data_c0[mask_soglie] = np.nan
+    
+    stat_text = (f"Punti corretti Gauss ({n_sigma}σ): {punti_corretti_gauss}\n"
+                 f"Punti eliminati soglie (+20/-30): {punti_eliminati_soglie}\n"
+                 f"Totale campioni analizzati: {tot_punti}")
+    
+    return data_c0, stat_text
+
+# --- LOGICA VBA: COLORI (Select Case valAbs) ---
+def get_vba_color(val):
+    v = abs(val)
+    if pd.isna(v): return "gray"
+    if v <= 1: return "rgb(146, 208, 80)"   # Verde chiaro
+    if v <= 2: return "rgb(0, 176, 80)"     # Verde scuro
+    if v <= 3: return "rgb(255, 255, 0)"   # Giallo
+    if v <= 4: return "rgb(255, 192, 0)"   # Arancione
+    if v <= 5: return "rgb(255, 0, 0)"     # Rosso
+    return "rgb(112, 48, 160)"              # Viola
 
 def run_elettrolivelle():
-    # --- LOGO E INTESTAZIONE ---
     if os.path.exists("logo_dimos.jpg"):
         st.image("logo_dimos.jpg", width=400)
     
-    st.title("📏 Monitoraggio Avanzato Elettrolivelle")
-    st.markdown("---")
-
-    # --- CARICAMENTO FILE IN PAGINA PRINCIPALE ---
-    up = st.file_uploader("📂 Carica file Excel (Sezioni + ARRAY)", type=['xlsx', 'xlsm'], key="up_livelle_main")
+    st.title("📏 Analisi Elettrolivelle (VBA Integrated)")
+    
+    up = st.file_uploader("📂 Carica Excel Progetto", type=['xlsx', 'xlsm'])
     
     if up:
         xls = pd.ExcelFile(up)
         
-        # Lettura Sequenza ARRAY
+        # Sequenza ARRAY
         sequenza_fisica = None
         if "ARRAY" in xls.sheet_names:
             df_array = pd.read_excel(xls, sheet_name="ARRAY")
             sequenza_fisica = df_array.iloc[:, 0].dropna().astype(str).tolist()
 
         sheets = [s for s in xls.sheet_names if s not in ["ARRAY", "NAME", "Info"]]
-        sel_sheet = st.selectbox("Seleziona Layer / Sezione di monitoraggio:", sheets)
+        sel_sheet = st.selectbox("Seleziona Sezione", sheets)
         
-        # --- SIDEBAR PER PARAMETRI TECNICI ---
         with st.sidebar:
-            st.header("⚙️ Configurazione")
-            asse = st.selectbox("Asse di Analisi", ["X", "Y", "Z"])
+            st.header("⚙️ Parametri VBA")
+            asse = st.selectbox("Asse", ["X", "Y", "Z"])
             l_barra = st.number_input("Lunghezza Barra (mm)", value=3000)
-            sigma_val = st.slider("Filtro Gauss (Sigma)", 0.0, 5.0, 2.5)
+            sigma_val = st.slider("Sigma Gauss", 1.0, 5.0, 2.0)
             st.divider()
-            st.header("🎬 Animazione")
-            vel = st.slider("Velocità (ms)", 50, 1000, 200)
-            limite_y = st.number_input("Range Y (+/- mm)", value=20.0)
+            vel = st.slider("Velocità Animazione (ms)", 50, 1000, 200)
+            limite_y = st.number_input("Limite Y Grafici (mm)", value=20.0)
 
-        # --- CARICAMENTO DATI ---
         df = pd.read_excel(up, sheet_name=sel_sheet)
         time_col = pd.to_datetime(df.iloc[:, 0])
         cols_asse = [c for c in df.columns if f"_{asse}" in str(c)]
         
-        # Ordinamento secondo ARRAY
         if sequenza_fisica:
             def sort_key(c):
                 for i, s in enumerate(sequenza_fisica):
@@ -83,98 +105,93 @@ def run_elettrolivelle():
             cols_asse = sorted(cols_asse, key=sort_key)
 
         if cols_asse:
-            # --- ELABORAZIONE MATEMATICA VETTORIALIZZATA ---
-            raw_values = df[cols_asse].replace(0, np.nan).values
-            data_mm = l_barra * np.sin(np.radians(raw_values))
-            # Delta C0 (riferito alla prima riga)
-            data_c0 = data_mm - np.nanmean(data_mm[0:1, :], axis=0)
+            # ELABORAZIONE
+            data_final, stats = elaborazione_vba_style(df[cols_asse], l_barra, sigma_val)
+            ids = [re.search(r'CL_(\d+)', c).group(1) if "CL_" in c else c for c in cols_asse]
 
-            # Filtro Gauss (Pulizia)
-            if sigma_val > 0:
-                m_vec = np.nanmean(data_c0, axis=0)
-                s_vec = np.nanstd(data_c0, axis=0)
-                data_c0[(data_c0 < m_vec - sigma_val*s_vec) | (data_c0 > m_vec + sigma_val*s_vec)] = np.nan
+            tab1, tab2 = st.tabs(["🎬 Dashboard Dinamica", "📄 Export Report Word"])
 
-            # --- SMART INTERPOLATION ---
-            plot_vals = np.zeros_like(data_c0)
-            is_ricostruito = np.zeros_like(data_c0, dtype=bool)
-            for j in range(len(cols_asse)):
-                for i in range(len(data_c0)):
-                    val, ric = ricostruisci_dato_smart(data_c0[:, j], i)
-                    plot_vals[i, j] = val
-                    is_ricostruito[i, j] = ric
-
-            # --- VISUALIZZAZIONE ---
-            tab_din, tab_rep = st.tabs(["🎬 Deformata Dinamica", "📄 Report e Export"])
-
-            with tab_din:
-                tipo_v = st.radio("Visualizzazione:", ["Spostamento Singolo", "Deformata Cumulata"], horizontal=True)
-                if "Cumulata" in tipo_v:
-                    final_plot = np.nancumsum(plot_vals, axis=1)
-                else:
-                    final_plot = plot_vals
-
-                ids = [re.search(r'CL_(\d+)', c).group(1) if "CL_" in c else c for c in cols_asse]
+            with tab1:
+                st.info(stats)
+                idx = st.slider("Seleziona Istante Temporale", 0, len(time_col)-1, 0)
+                
+                # Calcolo colori per l'istante selezionato
+                current_vals = data_final[idx]
+                colors = [get_vba_color(v) for v in current_vals]
                 
                 fig = go.Figure()
-                fig.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.3)
-
-                # Setup Frame 0 con Pallini/Quadrati
-                symbols = ["circle" if not r else "square" for r in is_ricostruito[0]]
-                colors = ["red" if not r else "#00b4d8" for r in is_ricostruito[0]]
+                fig.add_hline(y=0, line_color="black", opacity=0.3)
                 
+                # La Spezzata
                 fig.add_trace(go.Scatter(
-                    x=ids, y=final_plot[0], mode='lines+markers+text',
-                    text=[f"!" if r else "" for r in is_ricostruito[0]],
-                    textposition="middle center", textfont=dict(color="white", size=10),
-                    marker=dict(size=14, symbol=symbols, color=colors, line=dict(width=2, color="white")),
-                    line=dict(width=3, color='#1f77b4'), connectgaps=True
+                    x=ids, y=current_vals,
+                    mode='lines+markers+text',
+                    text=[f"{v:.2f}" if pd.notnull(v) else "NaN" for v in current_vals],
+                    textposition="top center",
+                    textfont=dict(size=9, color="black"),
+                    marker=dict(size=12, color=colors, line=dict(width=1, color="white"), symbol="circle"),
+                    line=dict(color="#1f77b4", width=3),
+                    name=time_col[idx].strftime("%d/%m/%Y %H:%M")
                 ))
-
-                frames = [go.Frame(data=[go.Scatter(
-                    y=final_plot[i],
-                    marker=dict(symbol=["circle" if not r else "square" for r in is_ricostruito[i]],
-                                color=["red" if not r else "#00b4d8" for r in is_ricostruito[i]]),
-                    text=[f"!" if r else "" for r in is_ricostruito[i]]
-                )], name=str(i)) for i in range(len(final_plot))]
                 
-                fig.frames = frames
+                # Etichette sensori sotto i pallini (ruotate come VBA)
                 fig.update_layout(
+                    title=f"Data: {time_col[idx].strftime('%d/%m/%Y %H:%M:%S')}",
                     yaxis=dict(range=[-limite_y, limite_y], title="Spostamento (mm)"),
-                    template="plotly_white", height=600,
-                    updatemenus=[{"buttons": [{"args": [None, {"frame": {"duration": vel}}], "label": "▶ Play", "method": "animate"},
-                                              {"args": [[None], {"frame": {"duration": 0}}], "label": "⏸ Pausa", "method": "animate"}],
-                                  "type": "buttons", "showactive": False, "x": 0.05, "y": 1.15}],
-                    sliders=[{"steps": [{"method": "animate", "label": time_col[i].strftime("%H:%M"), "args": [[str(i)], {"frame": {"duration": vel}}]} for i in range(len(final_plot))]}]
+                    xaxis=dict(tickangle=-90, title="Sensori (Sequenza ARRAY)"),
+                    template="plotly_white", height=600
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-            with tab_rep:
-                # --- STAMPA WORD (FUNZIONANTE) ---
-                if st.button("🚀 GENERA REPORT WORD (.docx)"):
-                    if DOCX_AVAILABLE:
+            with tab2:
+                st.subheader("Configurazione Stampe")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### 1. Report Statistico")
+                    st.write("Genera un documento con i log di pulizia VBA e soglie.")
+                    if st.button("Genera Report Statistico"):
                         doc = Document()
-                        doc.add_heading(f'Report Elettrolivelle - {sel_sheet}', 0)
-                        
-                        # Grafico Deformata Finale
-                        plt.figure(figsize=(10, 5))
-                        plt.plot(ids, final_plot[-1], marker='o', color='red', label='Ultima Lettura')
-                        plt.axhline(0, color='black', lw=1)
-                        plt.title(f"Deformata Finale - Asse {asse}")
-                        plt.grid(True)
-                        
+                        doc.add_heading("REPORT ELABORAZIONE ELETTROLIVELLE", 0)
+                        doc.add_paragraph(stats)
                         buf = BytesIO()
-                        plt.savefig(buf, format='png')
-                        plt.close()
-                        doc.add_picture(buf, width=Inches(6))
+                        doc.save(buf)
+                        st.download_button("Scarica Statistiche", buf.getvalue(), "Stats_VBA.docx")
+
+                with col2:
+                    st.markdown("### 2. Report Spezzate Temporali")
+                    freq = st.selectbox("Campionamento:", ["Giornaliero", "Settimanale", "Mensile", "Tutti i dati"])
+                    
+                    if st.button("Genera Report Grafici"):
+                        # Logica di campionamento
+                        df_temp = pd.DataFrame(data_final, index=time_col)
+                        if freq == "Giornaliero": df_res = df_temp.resample('D').mean()
+                        elif freq == "Settimanale": df_res = df_temp.resample('W').mean()
+                        elif freq == "Mensile": df_res = df_temp.resample('M').mean()
+                        else: df_res = df_temp
+
+                        doc = Document()
+                        doc.add_heading(f"Sequenza Deformate - {sel_sheet}", 0)
                         
-                        doc.add_paragraph(f"\nParametri: Barra {l_barra}mm, Sigma {sigma_val}")
+                        progress_bar = st.progress(0)
+                        for i, (date, row) in enumerate(df_res.iterrows()):
+                            plt.figure(figsize=(10, 4))
+                            plt.plot(ids, row.values, marker='o', color='red', linewidth=2)
+                            plt.axhline(0, color='black', alpha=0.3)
+                            plt.title(f"Data: {date.strftime('%d/%m/%Y')}")
+                            plt.ylim(-limite_y, limite_y)
+                            plt.grid(True, alpha=0.3)
+                            
+                            img_buf = BytesIO()
+                            plt.savefig(img_buf, format='png')
+                            plt.close()
+                            doc.add_picture(img_buf, width=Inches(6))
+                            doc.add_paragraph(f"Lettura del {date}")
+                            progress_bar.progress((i + 1) / len(df_res))
                         
                         out = BytesIO()
                         doc.save(out)
-                        st.download_button("⬇️ SCARICA DOCUMENTO", out.getvalue(), f"Report_{sel_sheet}.docx")
-                    else:
-                        st.error("Libreria docx non trovata.")
+                        st.download_button("Scarica Report Grafici", out.getvalue(), "Report_Spezzate.docx")
 
     else:
-        st.info("👋 Benvenuto! Carica un file Excel per iniziare l'analisi delle elettrolivelle.")
+        st.info("In attesa del file Excel...")
