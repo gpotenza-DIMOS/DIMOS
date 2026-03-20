@@ -41,13 +41,22 @@ def calcolo_motore_vba(df_values, l_barra, n_sigma, limit_val):
 
 # --- FUNZIONE PRINCIPALE (Richiamata da app_DIMOS.py) ---
 def run_elettrolivelle():
+    # --- LOGO E TITOLO IN ALTO ---
+    col_logo, _ = st.columns([1, 2])
+    with col_logo:
+        if os.path.exists("logo_dimos.jpg"):
+            st.image("logo_dimos.jpg", width=300)
+    
     st.header("📏 Monitoraggio Avanzato Elettrolivelle")
 
-    # Sidebar: Parametri Tecnici
+    # --- CARICAMENTO FILE IN ALTO CENTRALE ---
+    st.info("📂 Caricamento Dati")
+    file_input = st.file_uploader("Trascina qui il file Excel Monitoraggio", type=['xlsm', 'xlsx'], key="el_up")
+
+    # Sidebar: Solo Parametri Tecnici
     with st.sidebar:
         st.divider()
         st.subheader("⚙️ Parametri Analisi")
-        file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsm', 'xlsx'], key="el_up")
         
         if file_input:
             asse_sel = st.selectbox("Asse di Analisi", ["X", "Y", "Z"], key="el_asse")
@@ -65,12 +74,11 @@ def run_elettrolivelle():
             vel_animazione = st.slider("Velocità Video (ms)", 100, 2000, 400)
 
     if not file_input:
-        st.info("Benvenuto. Carica un file Excel per attivare l'analisi delle deformate.")
+        st.info("Benvenuto. Carica un file Excel in alto per attivare l'analisi delle deformate.")
         return
 
     # Lettura Excel
     xls = pd.ExcelFile(file_input)
-    # Filtro fogli: solo quelli che iniziano con ETS_ e non sono fogli di calcolo pregressi
     sheets = [s for s in xls.sheet_names if s not in ["ARRAY", "Info"] and not s.endswith(("C0", "CP0"))]
     
     tab1, tab2 = st.tabs(["📊 Analisi Dinamica", "🖨️ Report Word Massivo"])
@@ -87,11 +95,9 @@ def run_elettrolivelle():
             df_array = pd.read_excel(file_input, sheet_name="ARRAY", header=None)
             row_array = df_array[df_array[0] == sel_sheet]
             if not row_array.empty:
-                # Prende gli ID sensore, li formatta CL_XXX
                 sensor_order = row_array.iloc[0, 1:].dropna().astype(float).astype(int).astype(str).tolist()
                 sensor_order = [s.zfill(3) for s in sensor_order]
 
-        # Selezione colonne sensori basata sull'ordine ARRAY
         found_cols = [c for c in df_full.columns if "CL_" in c and f"_{asse_sel}" in c]
         if sensor_order:
             sensor_cols = []
@@ -105,11 +111,9 @@ def run_elettrolivelle():
             st.warning(f"Nessun sensore trovato per l'asse {asse_sel} nel foglio {sel_sheet}")
             return
 
-        # Calcolo Deformata
         df_cp0 = calcolo_motore_vba(df_full[sensor_cols].ffill(), l_barra, sigma_val, limit_val)
         labels = [re.search(r'CL_(\d+)', c).group(1) for c in sensor_cols]
 
-        # Campionamento Temporale per Video
         df_calc = df_cp0.copy()
         df_calc['Data_Ora'] = time_col
         if step_video == "1 Giorno":
@@ -124,7 +128,6 @@ def run_elettrolivelle():
         
         df_sampled = df_sampled.drop(columns=['Data_Ora'], errors='ignore').dropna(how='all')
 
-        # --- GRAFICO DINAMICO (VIDEO) ---
         st.subheader(f"🎬 Deformata {asse_sel}: {sel_sheet}")
         fig_vid = go.Figure()
         fig_vid.add_trace(go.Scatter(
@@ -152,7 +155,6 @@ def run_elettrolivelle():
         
         st.plotly_chart(fig_vid, use_container_width=True)
 
-        # --- TREND TEMPORALE ---
         st.divider()
         st.subheader("📈 Analisi Trend Temporale")
         sel_sens = st.multiselect("Seleziona sensori da confrontare:", labels, default=labels[:3] if len(labels)>3 else labels)
@@ -188,15 +190,21 @@ def run_elettrolivelle():
                         for idx, c_name in enumerate(cols_l):
                             s_id = re.search(r'CL_(\d+)', c_name).group(1)
                             
-                            # Logica VBA: Pulizia Sigma 2 e Media Mobile 5 punti (come da tuo OTTIMO)
                             serie = df_res.iloc[:, idx]
                             m_val, d_val = serie.mean(), serie.std()
                             serie_p = serie.mask(abs(serie - m_val) > (2 * d_val), m_val)
                             serie_final = serie_p.rolling(5, center=True).mean().ffill().bfill()
                             
+                            # --- AGGIUNTA CURVA DI TENDENZA (MEDIA MOBILE LUNGA) ---
+                            serie_trend = serie_p.rolling(10, center=True).mean().ffill().bfill()
+                            
                             fig_tmp = go.Figure()
-                            fig_tmp.add_trace(go.Scatter(x=t_l, y=serie_final, line=dict(color='blue', width=1.5)))
-                            fig_tmp.update_layout(title=f"Sensore CL_{s_id} - Trend Temporale", width=900, height=400)
+                            # Dati Filtrati
+                            fig_tmp.add_trace(go.Scatter(x=t_l, y=serie_final, name="Dati Filtrati", line=dict(color='blue', width=1.5)))
+                            # Curva di Tendenza
+                            fig_tmp.add_trace(go.Scatter(x=t_l, y=serie_trend, name="Curva Tendenza", line=dict(color='red', width=2, dash='dot')))
+                            
+                            fig_tmp.update_layout(title=f"Sensore CL_{s_id} - Trend Temporale", width=900, height=400, showlegend=True)
                             
                             img_stream = BytesIO(pio.to_image(fig_tmp, format="png"))
                             doc.add_paragraph(f"Andamento temporale sensore: {s_id}")
