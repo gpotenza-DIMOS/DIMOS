@@ -6,3 +6,4 @@ python-docx
 matplotlib
 openpyxl
 kaleido==0.2.1
+streamlit-folium
