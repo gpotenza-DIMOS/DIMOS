@@ -3,28 +3,29 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import re
+import os
 from io import BytesIO
 
-# --- LIBRERIE OPZIONALI ---
+# --- SUPPORTO REPORT ---
 try:
     from docx import Document
     from docx.shared import Inches
     import plotly.io as pio
-    DOC_OK = True
+    DOC_SUPPORT = True
 except:
-    DOC_OK = False
+    DOC_SUPPORT = False
 
-# --- MOTORE DI CALCOLO (L*sin(rad), Delta C0, Cumulata CP0) ---
+# --- MOTORE DI CALCOLO IDENTICO A EXCEL/VBA ---
 @st.cache_data(show_spinner=False)
-def elaborazione_vba_originale(df_values, l_barra, n_sigma, limit_val):
-    # 1. Calcolo mm
+def calcolo_deformata_fabro(df_values, l_barra, n_sigma, limit_val):
+    # 1. Conversione Angolo -> mm (L * sin(rad))
     data_mm = l_barra * np.sin(np.radians(df_values.values))
-    # 2. Delta C0
+    # 2. Calcolo Delta C0 (Valore attuale - Prima lettura)
     data_c0 = data_mm - data_mm[0, :]
-    # 3. Cumulata lungo la riga (CP0)
+    # 3. Deformata Cumulata CP0 (Somma orizzontale sensori)
     data_cp0 = np.cumsum(data_c0, axis=1)
     
-    # Filtro Limiti e Sigma
+    # Filtri di pulizia (Sigma e Soglia)
     data_cp0[np.abs(data_cp0) > limit_val] = np.nan
     means = np.nanmean(data_cp0, axis=0)
     stds = np.nanstd(data_cp0, axis=0)
@@ -34,82 +35,99 @@ def elaborazione_vba_originale(df_values, l_barra, n_sigma, limit_val):
         data_cp0[mask, j] = m
     return pd.DataFrame(data_cp0, index=df_values.index).ffill().fillna(0)
 
-# --- FUNZIONE PRINCIPALE RICHIAMATA DA APP_DIMOS ---
+# --- QUESTA È LA FUNZIONE CHE RICHIAMA app_DIMOS.py ---
 def run_elettrolivelle_advanced():
-    st.header("📏 Modulo Elettrolivelle")
+    st.markdown("### 📏 Analisi Deformate Elettrolivelle")
 
     with st.sidebar:
         st.divider()
-        file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsm', 'xlsx'], key="el_up")
-        if file_input:
-            asse_sel = st.selectbox("Asse di Analisi", ["X", "Y", "Z"], key="el_asse")
-            l_barra = st.number_input("Lunghezza Barra (mm)", value=3000)
-            sigma_val = st.slider("Filtro Sigma", 1.0, 4.0, 2.0)
-            limit_val = st.number_input("Soglia Errore (mm)", value=30.0)
+        uploaded_file = st.file_uploader("Carica File Excel Fabro", type=['xlsm', 'xlsx'], key="up_el")
+        if uploaded_file:
+            asse = st.selectbox("Seleziona Asse", ["X", "Y", "Z"], key="sel_asse")
+            L = st.number_input("Lunghezza Barra (mm)", value=3000)
+            sig = st.slider("Filtro Sigma", 1.0, 4.0, 2.0)
+            lim = st.number_input("Soglia Errore (mm)", value=30.0)
             st.divider()
-            step_v = st.select_slider("Campionamento Video:", options=["Ogni Lettura", "1 Giorno", "1 Settimana"], value="1 Giorno")
-            vel_v = st.slider("Velocità (ms)", 100, 1000, 400)
+            campionamento = st.select_slider("Frequenza Video:", options=["Tutte", "1 Giorno", "1 Settimana"], value="1 Giorno")
+            fps = st.slider("Velocità Frame (ms)", 100, 1000, 400)
 
-    if not file_input:
-        st.info("Carica il file Excel per visualizzare i grafici.")
+    if not uploaded_file:
+        st.warning("⚠️ Carica il file Excel per visualizzare i dati.")
         return
 
-    xls = pd.ExcelFile(file_input)
-    sheets = [s for s in xls.sheet_names if s.startswith("ETS_") and not s.endswith(("C0", "CP0"))]
+    # Lettura fogli dati
+    xls = pd.ExcelFile(uploaded_file)
+    fogli_dati = [s for s in xls.sheet_names if s.startswith("ETS_") and not s.endswith(("C0", "CP0"))]
     
-    tab1, tab2 = st.tabs(["🎥 Video Deformata", "📄 Report Word"])
+    tab_graf, tab_rep = st.tabs(["📈 Grafico Dinamico", "📄 Esportazione Report"])
 
-    with tab1:
-        sel_s = st.selectbox("Seleziona Stringa", sheets)
-        df = pd.read_excel(file_input, sheet_name=sel_s)
-        df.columns = [str(c).strip() for c in df.columns]
-        time_c = pd.to_datetime(df.iloc[:, 0])
+    with tab_graf:
+        stringa = st.selectbox("Seleziona Stringa Sensori", fogli_dati)
+        df_raw = pd.read_excel(uploaded_file, sheet_name=stringa)
+        df_raw.columns = [str(c).strip() for c in df_raw.columns]
+        date_series = pd.to_datetime(df_raw.iloc[:, 0])
 
-        # Sequenza da foglio ARRAY
-        s_order = []
+        # Lettura Sequenza Fisica (Foglio ARRAY)
+        ordine_fisico = []
         if "ARRAY" in xls.sheet_names:
-            df_a = pd.read_excel(file_input, sheet_name="ARRAY", header=None)
-            r = df_a[df_a[0] == sel_s]
-            if not r.empty:
-                s_order = r.iloc[0, 1:].dropna().astype(str).tolist()
+            df_arr = pd.read_excel(uploaded_file, sheet_name="ARRAY", header=None)
+            matching_row = df_arr[df_arr[0] == stringa]
+            if not matching_row.empty:
+                ordine_fisico = matching_row.iloc[0, 1:].dropna().astype(str).tolist()
 
-        c_found, l_x = [], []
-        for s_id in s_order:
-            pat = rf"{s_id}.*_{asse_sel}"
-            m = [c for c in df.columns if re.search(pat, str(c), re.IGNORECASE)]
-            if m:
-                c_found.append(m[0])
-                l_x.append(s_id)
+        # Selezione colonne sensori
+        col_ok, labels = [], []
+        for s_id in ordine_fisico:
+            regex = rf"{s_id}.*_{asse}"
+            match = [c for c in df_raw.columns if re.search(regex, str(c), re.IGNORECASE)]
+            if match:
+                col_ok.append(match[0])
+                labels.append(s_id)
 
-        if not c_found:
-            st.error(f"Nessuna colonna per {asse_sel} in {sel_s}")
+        if not col_ok:
+            st.error(f"Dati mancanti per l'asse {asse} nella stringa {stringa}.")
             return
 
-        # Calcolo
-        df_res = elaborazione_vba_originale(df[c_found].ffill(), l_barra, sigma_val, limit_val)
+        # Calcolo Deformata
+        df_cp0 = calcolo_deformata_fabro(df_raw[col_ok].ffill(), L, sig, lim)
         
-        # Campionamento
-        df_res['DT'] = time_c
-        if step_v == "1 Giorno": df_s = df_res.groupby(df_res['DT'].dt.date).first().drop(columns='DT')
-        elif step_v == "1 Settimana": df_s = df_res.set_index('DT').resample('W').first().dropna()
-        else: df_s = df_res.set_index('DT')
+        # Campionamento temporale
+        df_cp0['Data_Ora'] = date_series
+        if campionamento == "1 Giorno":
+            df_plot = df_cp0.groupby(df_cp0['Data_Ora'].dt.date).first().drop(columns='Data_Ora')
+        elif campionamento == "1 Settimana":
+            df_plot = df_cp0.set_index('Data_Ora').resample('W').first().dropna()
+        else:
+            df_plot = df_cp0.set_index('Data_Ora')
 
-        # Plotly Animato
-        fig = go.Figure(data=[go.Scatter(x=l_x, y=df_s.iloc[0], mode='lines+markers+text', text=[f"{v:.2f}" for v in df_s.iloc[0]], textposition="top center")])
-        fig.update_layout(xaxis=dict(type='category', title="Sequenza"), yaxis=dict(range=[-limit_val-5, limit_val+5], title="mm"), template="plotly_white", height=600,
-                          sliders=[{"steps": [{"method": "animate", "label": str(t), "args": [[str(i)], {"frame": {"duration": vel_v, "redraw": True}}]} for i, t in enumerate(df_s.index)]}])
-        fig.frames = [go.Frame(data=[go.Scatter(x=l_x, y=df_s.iloc[i], text=[f"{v:.2f}" for v in df_s.iloc[i]], marker=dict(color=['red' if abs(v)>10 else 'green' for v in df_s.iloc[i]]))], name=str(i)) for i in range(len(df_s))]
+        # Creazione Plotly
+        fig = go.Figure(data=[go.Scatter(x=labels, y=df_plot.iloc[0], mode='lines+markers+text', 
+                                         text=[f"{v:.2f}" for v in df_plot.iloc[0]], textposition="top center")])
+        
+        fig.update_layout(xaxis=dict(type='category', title="Sensori (Ordine ARRAY)"),
+                          yaxis=dict(range=[-lim-5, lim+5], title="Deformata (mm)"),
+                          template="plotly_white", height=650,
+                          sliders=[{"steps": [{"method": "animate", "label": str(t), 
+                                   "args": [[str(i)], {"frame": {"duration": fps, "redraw": True}}]} 
+                                  for i, t in enumerate(df_plot.index)]}])
+
+        fig.frames = [go.Frame(data=[go.Scatter(x=labels, y=df_plot.iloc[i], 
+                                               text=[f"{v:.2f}" for v in df_plot.iloc[i]],
+                                               marker=dict(color=['red' if abs(v)>15 else 'green' for v in df_plot.iloc[i]]))], 
+                               name=str(i)) for i in range(len(df_plot))]
+
         st.plotly_chart(fig, use_container_width=True)
 
-    with tab2:
-        if st.button("🚀 GENERA REPORT"):
-            if not DOC_OK: st.error("Librerie docx/pio mancanti.")
+    with tab_rep:
+        if st.button("🚀 GENERA DOCUMENTO WORD"):
+            if not DOC_SUPPORT:
+                st.error("Librerie mancanti per il report.")
             else:
                 doc = Document()
-                doc.add_heading(f"Monitoraggio: {sel_s}", 0)
-                img_buf = BytesIO()
-                pio.write_image(fig, img_buf, format="png")
-                doc.add_picture(img_buf, width=Inches(6))
-                word_out = BytesIO()
-                doc.save(word_out)
-                st.download_button("📥 Scarica Report", word_out.getvalue(), f"Report_{sel_s}.docx")
+                doc.add_heading(f"Report Deformata - Stringa {stringa}", 0)
+                img_stream = BytesIO()
+                pio.write_image(fig, img_stream, format="png", width=1000, height=600)
+                doc.add_picture(img_stream, width=Inches(6.5))
+                target = BytesIO()
+                doc.save(target)
+                st.download_button("📥 Scarica Report", target.getvalue(), f"Report_{stringa}.docx")
