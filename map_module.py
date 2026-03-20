@@ -10,11 +10,8 @@ from folium.raster_layers import ImageOverlay
 from PIL import Image
 from io import BytesIO
 
-# Configurazione costanti
 CONFIG_FILE = "mac_positions.json"
-OVERLAY_FILE = "overlay_config.json"
 
-# --- FUNZIONI DI SUPPORTO ---
 def load_json_safe(file):
     if os.path.exists(file):
         try:
@@ -28,53 +25,63 @@ def save_json_safe(file, data):
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
 
-@st.cache_data(ttl=3600)
-def get_city_coords(city_name):
+def parse_excel_with_coords(file):
     try:
-        url = f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1"
-        headers = {'User-Agent': 'DIMOS_APP_V3'}
-        r = requests.get(url, headers=headers, timeout=5)
-        if r.status_code == 200 and r.json():
-            return float(r.json()[0]['lat']), float(r.json()[0]['lon'])
-    except: return None
-    return None
+        xls = pd.ExcelFile(file)
+        if "NAME" not in xls.sheet_names: return None
+        df = pd.read_excel(xls, sheet_name="NAME", header=None).fillna("")
+        
+        ana = {}
+        excel_points = []
+        
+        for c in range(1, df.shape[1]):
+            dl = str(df.iloc[0, c]).strip()
+            sn = str(df.iloc[1, c]).strip()
+            
+            if dl and dl != "nan" and dl != "":
+                if dl not in ana: ana[dl] = []
+                ana[dl].append(sn)
+                
+                # Cerca coordinate nelle righe 3 e 4 (indice 3 e 4 di pandas)
+                try:
+                    lat_ex = float(df.iloc[3, c])
+                    lon_ex = float(df.iloc[4, c])
+                    excel_points.append({"dl": dl, "nome": sn, "lat": lat_ex, "lon": lon_ex})
+                except (ValueError, TypeError):
+                    continue
+        return ana, excel_points
+    except: return None, []
 
-# ------------------ LA FUNZIONE CHE IL TUO MAIN CERCA ------------------
 def run_map_manager():
     st.subheader("📍 Gestione Posizionamento Sensori MAC")
 
-    # Inizializzazione Session State robusta
     if 'punti' not in st.session_state:
         st.session_state.punti = load_json_safe(CONFIG_FILE)
     if 'center' not in st.session_state:
-        st.session_state.center = [45.4642, 9.1900]
+        st.session_state.center = [43.61, 13.52] # Default Ancona/Falconara come da tuo screen
 
-    # --- SIDEBAR PER CARICAMENTO EXCEL ---
     with st.sidebar:
-        st.image("https://www.microgeo.it/wp-content/uploads/2023/04/logo-microgeo.png", width=150) # Estetica
+        st.image("https://www.microgeo.it/wp-content/uploads/2023/04/logo-microgeo.png", width=150)
         up = st.file_uploader("Carica Anagrafica (.xlsx)", type=['xlsx'])
+        
         if up:
-            try:
-                df_ana = pd.read_excel(up, sheet_name="NAME", header=None).fillna("")
-                ana_dict = {}
-                for c in range(1, df_ana.shape[1]):
-                    dl = str(df_ana.iloc[0, c]).strip()
-                    sn = str(df_ana.iloc[1, c]).strip()
-                    if dl and dl != "nan":
-                        if dl not in ana_dict: ana_dict[dl] = []
-                        ana_dict[dl].append(sn)
-                st.session_state['anagrafica_data'] = ana_dict
-                st.success("Anagrafica Caricata")
-            except Exception as e:
-                st.error(f"Errore foglio NAME: {e}")
+            ana, ex_punti = parse_excel_with_coords(up)
+            if ana:
+                st.session_state['anagrafica_data'] = ana
+                # Sincronizza i punti dell'Excel con quelli del JSON (l'Excel vince se presente)
+                current_punti = {f"{p['dl']}|{p['nome']}": p for p in st.session_state.punti}
+                for ep in ex_punti:
+                    current_punti[f"{ep['dl']}|{ep['nome']}"] = ep
+                
+                st.session_state.punti = list(current_punti.values())
+                save_json_safe(CONFIG_FILE, st.session_state.punti)
+                st.success(f"Caricati {len(ex_punti)} sensori con coordinate.")
 
     if 'anagrafica_data' not in st.session_state:
-        st.info("💡 Carica il file Excel dalla sidebar per iniziare.")
+        st.info("💡 Carica l'Excel per visualizzare i sensori e le coordinate pre-esistenti.")
         st.stop()
 
-    # --- INTERFACCIA DI CONTROLLO ---
     ana = st.session_state['anagrafica_data']
-    
     c1, c2, c3 = st.columns(3)
     with c1:
         sel_dl = st.multiselect("📡 Datalogger", list(ana.keys()), default=list(ana.keys()))
@@ -82,49 +89,37 @@ def run_map_manager():
         lista_full = [f"{d} | {s}" for d in sel_dl for s in ana[d]]
         visibili = st.multiselect("👁️ Mostra", lista_full, default=lista_full)
     with c3:
-        target = st.selectbox("🎯 Seleziona per muovere/posizionare", lista_full)
+        target = st.selectbox("🎯 Target per muovere", lista_full)
 
-    # --- GESTIONE MAPPA E OVERLAY ---
-    search = st.text_input("🔍 Cerca località (es. Firenze)")
-    if search:
-        new_c = get_city_coords(search)
-        if new_c: st.session_state.center = new_c
+    m = folium.Map(location=st.session_state.center, zoom_start=17)
 
-    m = folium.Map(location=st.session_state.center, zoom_start=19, control_scale=True)
-
-    # Marker esistenti
     for p in st.session_state.punti:
         tag = f"{p['dl']} | {p['nome']}"
         if tag in visibili:
-            color = 'red' if tag == target else 'blue'
-            folium.Marker([p['lat'], p['lon']], popup=tag, 
-                          icon=folium.Icon(color=color, icon='microchip', prefix='fa')).add_to(m)
+            is_target = (tag == target)
+            folium.Marker(
+                [p['lat'], p['lon']], 
+                popup=tag, 
+                tooltip=tag,
+                icon=folium.Icon(color='red' if is_target else 'blue', icon='info-sign')
+            ).add_to(m)
 
-    # Rende la mappa
-    scelta = st_folium(m, width="100%", height=550, key="dimos_map")
+    scelta = st_folium(m, width=1200, height=550, key="map_v4")
 
-    # Logica Click (Update)
     if scelta and scelta.get("last_clicked") and target:
-        lat_c = scelta["last_clicked"]["lat"]
-        lon_c = scelta["last_clicked"]["lng"]
-        dl_target, sn_target = target.split(" | ")
+        lat_c, lon_c = scelta["last_clicked"]["lat"], scelta["last_clicked"]["lng"]
+        dl_t, sn_t = target.split(" | ")
         
-        # Rimuovi vecchio se esiste e aggiungi nuovo
-        st.session_state.punti = [p for p in st.session_state.punti if not (p['dl']==dl_target and p['nome']==sn_target)]
-        st.session_state.punti.append({"dl": dl_target, "nome": sn_target, "lat": lat_c, "lon": lon_c})
+        # Aggiorna posizione
+        st.session_state.punti = [p for p in st.session_state.punti if not (p['dl']==dl_t and p['nome']==sn_t)]
+        st.session_state.punti.append({"dl": dl_t, "nome": sn_t, "lat": lat_c, "lon": lon_c})
         
         save_json_safe(CONFIG_FILE, st.session_state.punti)
         st.rerun()
 
-    # Espositore Dati
-    with st.expander("📋 Tabella Coordinate"):
+    with st.expander("📋 Tabella Coordinate Correnti"):
         if st.session_state.punti:
-            st.table(pd.DataFrame(st.session_state.punti))
-            if st.button("🔴 Reset Completo Mappa"):
-                save_json_safe(CONFIG_FILE, [])
-                st.session_state.punti = []
-                st.rerun()
+            st.dataframe(pd.DataFrame(st.session_state.punti), use_container_width=True)
 
-# --- CALLBACK PER STREAMLIT ---
 if __name__ == "__main__":
     run_map_manager()
