@@ -195,14 +195,18 @@ def run_elettrolivelle():
                             serie_p = serie.mask(abs(serie - m_val) > (2 * d_val), m_val)
                             serie_final = serie_p.rolling(5, center=True).mean().ffill().bfill()
                             
-                            # --- AGGIUNTA CURVA DI TENDENZA (MEDIA MOBILE LUNGA) ---
-                            serie_trend = serie_p.rolling(10, center=True).mean().ffill().bfill()
+                            # --- AGGIUNTA CURVA DI TENDENZA POLINOMIALE (3° GRADO) ---
+                            # Convertiamo il tempo in numeri per il fit
+                            x_numeric = np.arange(len(t_l))
+                            coeffs = np.polyfit(x_numeric, serie_p.fillna(m_val), 3)
+                            poly_func = np.poly1d(coeffs)
+                            serie_trend = poly_func(x_numeric)
                             
                             fig_tmp = go.Figure()
                             # Dati Filtrati
                             fig_tmp.add_trace(go.Scatter(x=t_l, y=serie_final, name="Dati Filtrati", line=dict(color='blue', width=1.5)))
-                            # Curva di Tendenza
-                            fig_tmp.add_trace(go.Scatter(x=t_l, y=serie_trend, name="Curva Tendenza", line=dict(color='red', width=2, dash='dot')))
+                            # Curva di Tendenza Polinomiale
+                            fig_tmp.add_trace(go.Scatter(x=t_l, y=serie_trend, name="Trend Polinomiale (3°)", line=dict(color='red', width=2, dash='dot')))
                             
                             fig_tmp.update_layout(title=f"Sensore CL_{s_id} - Trend Temporale", width=900, height=400, showlegend=True)
                             
