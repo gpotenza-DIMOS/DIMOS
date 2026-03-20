@@ -3,163 +3,160 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
-import os
 import re
-from datetime import datetime
+import os
 from io import BytesIO
+from datetime import datetime
 
 try:
     from docx import Document
     from docx.shared import Inches
-    DOCX_AVAILABLE = True
 except ImportError:
-    DOCX_AVAILABLE = False
+    pass
 
-# --- LOGICA VBA: COLORI ---
 def get_vba_color(val):
     v = abs(val)
     if pd.isna(v): return "gray"
-    if v <= 1: return "rgb(146, 208, 80)"
-    if v <= 2: return "rgb(0, 176, 80)"
-    if v <= 3: return "rgb(255, 255, 0)"
-    if v <= 4: return "rgb(255, 192, 0)"
-    if v <= 5: return "rgb(255, 0, 0)"
-    return "rgb(112, 48, 160)"
-
-# --- MOTORE DI CALCOLO (VBA MERGE) ---
-def elaborazione_vba_style(df_values, l_barra, n_sigma):
-    data = df_values.replace(0, np.nan).values
-    data_mm = l_barra * np.sin(np.radians(data))
-    # Delta C0 rispetto alla prima riga valida
-    data_c0 = data_mm - np.nanmean(data_mm[0:1, :], axis=0)
-    
-    # Pulizia Gauss
-    m_vec = np.nanmean(data_c0, axis=0)
-    s_vec = np.nanstd(data_c0, axis=0)
-    punti_gauss = 0
-    for j in range(data_c0.shape[1]):
-        mask = np.abs(data_c0[:, j] - m_vec[j]) > (s_vec[j] * n_sigma)
-        punti_gauss += np.sum(mask)
-        data_c0[mask, j] = np.nan
-        
-    # Soglie Hard VBA
-    mask_soglie = (data_c0 > 20) | (data_c0 < -30)
-    punti_soglie = np.sum(mask_soglie)
-    data_c0[mask_soglie] = np.nan
-    
-    stats = f"Gauss ({n_sigma}σ): {punti_gauss} corr. | Soglie (+20/-30): {punti_soglie} elim."
-    return data_c0, stats
+    if v <= 1: return "rgb(146, 208, 80)"   # Verde 1
+    if v <= 2: return "rgb(0, 176, 80)"     # Verde 2
+    if v <= 3: return "rgb(255, 255, 0)"   # Giallo
+    if v <= 4: return "rgb(255, 192, 0)"   # Arancio
+    if v <= 5: return "rgb(255, 0, 0)"     # Rosso
+    return "rgb(112, 48, 160)"              # Viola
 
 def run_elettrolivelle():
-    if os.path.exists("logo_dimos.jpg"):
-        st.image("logo_dimos.jpg", width=400)
+    st.title("📏 Analisi Elettrolivelle (VBA Sync)")
     
-    st.title("📏 Analisi Elettrolivelle (Sequenza ARRAY)")
-    up = st.file_uploader("📂 Carica Excel", type=['xlsx', 'xlsm'])
+    up = st.file_uploader("Carica il file Excel (es. Fabro...)", type=['xlsm', 'xlsx'])
     
     if up:
         xls = pd.ExcelFile(up)
         
-        # --- 1. LETTURA SEQUENZA ARRAY (IL CUORE DEL SISTEMA) ---
-        sequenza_fisica = []
-        if "ARRAY" in xls.sheet_names:
-            df_array = pd.read_excel(xls, sheet_name="ARRAY")
-            # Legge la prima colonna del foglio ARRAY (es. CL_01, CL_02...)
-            sequenza_fisica = df_array.iloc[:, 0].dropna().astype(str).tolist()
-            st.success(f"✅ Sequenza ARRAY caricata: {len(sequenza_fisica)} sensori in ordine fisico.")
-        else:
-            st.warning("⚠️ Foglio ARRAY non trovato. L'ordine dei sensori sarà alfabetico.")
-
-        sheets = [s for s in xls.sheet_names if s not in ["ARRAY", "NAME", "Info"]]
-        sel_sheet = st.selectbox("Seleziona Sezione", sheets)
+        # 1. CARICAMENTO SEQUENZA DA FOGLIO ARRAY
+        if "ARRAY" not in xls.sheet_names:
+            st.error("Errore: Manca il foglio 'ARRAY' fondamentale per l'ordine dei sensori.")
+            return
         
+        df_array = pd.read_excel(xls, "ARRAY", header=None)
+        linee_disponibili = df_array[0].dropna().unique().tolist()
+        
+        sel_linea = st.selectbox("Seleziona Linea (da ARRAY)", linee_disponibili)
+        
+        # Estraiamo i sensori per quella specifica riga della linea
+        sensori_linea = df_array[df_array[0] == sel_linea].iloc[0, 1:].dropna().astype(str).tolist()
+        
+        # 2. SELEZIONE ASSE E PARAMETRI
         with st.sidebar:
-            st.header("⚙️ Configurazione")
-            asse = st.selectbox("Asse", ["X", "Y", "Z"])
+            asse = st.selectbox("Asse", ["X", "Y"])
             l_barra = st.number_input("Lunghezza Barra (mm)", value=3000)
-            sigma_val = st.slider("Sigma Gauss", 1.0, 5.0, 2.0)
-            tipo_grafico = st.radio("Tipo Visualizzazione", ["Spostamenti Singoli", "Deformata Cumulata"])
-            limite_y = st.number_input("Range Y (mm)", value=20.0)
+            sigma_val = st.slider("Gauss Sigma", 1.0, 4.0, 2.0)
+            limite_y = st.number_input("Scala Grafico (+/- mm)", value=20.0)
 
-        df = pd.read_excel(up, sheet_name=sel_sheet)
-        time_col = pd.to_datetime(df.iloc[:, 0])
+        # 3. RICERCA DATI NEI FOGLI ETS_X
+        # Cerchiamo in quale foglio ETS_ (1,2,3,4) si trovano i dati per la linea scelta
+        df_dati = None
+        for s_name in ["ETS_1", "ETS_2", "ETS_3", "ETS_4"]:
+            if s_name in xls.sheet_names:
+                temp_df = pd.read_excel(xls, s_name)
+                # Verifica se almeno un sensore della linea è presente nelle colonne
+                if any(sens in col for col in temp_df.columns for sens in sensori_linea):
+                    df_dati = temp_df
+                    break
         
-        # --- 2. ORDINAMENTO SECONDO ARRAY (Logica InStr del VBA) ---
-        cols_found = []
-        if sequenza_fisica:
-            for sensore in sequenza_fisica:
-                # Cerca tra le colonne del foglio quella che contiene l'ID e l'asse (es. CL_01 e _X)
-                match = [c for c in df.columns if sensore in str(c) and f"_{asse}" in str(c)]
-                if match:
-                    cols_found.append(match[0])
-        else:
-            cols_found = [c for c in df.columns if f"_{asse}" in str(c)]
-
-        if cols_found:
-            data_final, stats = elaborazione_vba_style(df[cols_found], l_barra, sigma_val)
+        if df_dati is not None:
+            time_col = pd.to_datetime(df_dati.iloc[:, 0]) # Colonna A (Date)
             
-            # Se Cumulata, sommiamo i valori lungo l'asse dei sensori (orizzontale)
-            if tipo_grafico == "Deformata Cumulata":
-                data_plot = np.nancumsum(data_final, axis=1)
-            else:
-                data_plot = data_final
+            # Identificazione colonne esatte (ID + ASSE)
+            cols_selezionate = []
+            for s_id in sensori_linea:
+                pattern = f"{s_id}.*_{asse}"
+                match = [c for c in df_dati.columns if re.search(pattern, str(c), re.IGNORECASE)]
+                if match:
+                    cols_selezionate.append(match[0])
 
-            labels = [re.search(r'CL_(\d+)', c).group(0) if "CL_" in c else c for c in cols_found]
+            if not cols_selezionate:
+                st.warning(f"Nessun dato trovato per l'asse {asse} nella linea {sel_linea}")
+                return
 
-            tab1, tab2 = st.tabs(["🎬 Grafico Dinamico", "📄 Report Word"])
+            # --- CALCOLI (MERGE VBA) ---
+            raw_data = df_dati[cols_selezionate].replace(0, np.nan)
+            
+            # VBA: L * Sin(v * PI / 180)
+            data_mm = l_barra * np.sin(np.radians(raw_data.values))
+            
+            # VBA C0: Sottrazione della prima riga valida (riferimento zero)
+            data_c0 = data_mm - data_mm[0, :]
+            
+            # VBA Gauss: 2 Sigma
+            m_vec = np.nanmean(data_c0, axis=0)
+            s_vec = np.nanstd(data_c0, axis=0)
+            for j in range(data_c0.shape[1]):
+                mask = np.abs(data_c0[:, j] - m_vec[j]) > (s_vec[j] * sigma_val)
+                data_c0[mask, j] = np.nan
+            
+            # VBA Soglia: +20/-30
+            data_c0[(data_c0 > 20) | (data_c0 < -30)] = np.nan
 
-            with tab1:
-                st.info(stats)
-                idx = st.slider("Sposta nel tempo", 0, len(time_col)-1, len(time_col)-1)
+            # --- VISUALIZZAZIONE ---
+            idx = st.slider("Seleziona Lettura", 0, len(time_col)-1, len(time_col)-1)
+            
+            current_vals = data_c0[idx]
+            colors = [get_vba_color(v) for v in current_vals]
+            
+            fig = go.Figure()
+            # La Spezzata
+            fig.add_trace(go.Scatter(
+                x=sensori_linea, y=current_vals,
+                mode='lines+markers+text',
+                text=[f"{v:.2f}" if pd.notnull(v) else "" for v in current_vals],
+                textposition="top center",
+                marker=dict(size=12, color=colors, line=dict(width=1, color="black")),
+                line=dict(color="gray", width=2)
+            ))
+            
+            fig.update_layout(
+                title=f"Linea {sel_linea} - Data: {time_col[idx]}",
+                yaxis=dict(range=[-limite_y, limite_y], title="mm"),
+                xaxis=dict(title="Sequenza ARRAY", tickangle=-45),
+                template="plotly_white", height=500
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # --- EXPORT WORD CAMPIONATO ---
+            st.divider()
+            st.subheader("🖨️ Export Report Word")
+            freq = st.selectbox("Esporta un campione ogni:", ["Giorno", "Settimana", "Mese", "Tutti"])
+            
+            if st.button("Genera Documento Word"):
+                doc = Document()
+                doc.add_heading(f"Report Monitoraggio: {sel_linea}", 0)
                 
-                curr_vals = data_plot[idx]
-                curr_colors = [get_vba_color(v) for v in data_final[idx]] # Colore sempre basato sul delta singolo
+                # Resampling temporale
+                df_temp = pd.DataFrame(data_c0, index=time_col)
+                if freq == "Giorno": df_res = df_temp.resample('D').mean().dropna(how='all')
+                elif freq == "Settimana": df_res = df_temp.resample('W').mean().dropna(how='all')
+                elif freq == "Mese": df_res = df_temp.resample('M').mean().dropna(how='all')
+                else: df_res = df_temp
                 
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=labels, y=curr_vals,
-                    mode='lines+markers+text',
-                    text=[f"{v:.2f}" if pd.notnull(v) else "" for v in curr_vals],
-                    textposition="top center",
-                    marker=dict(size=12, color=curr_colors, line=dict(width=1, color="black")),
-                    line=dict(width=3, color="gray" if "Cumulata" in tipo_grafico else "#1f77b4")
-                ))
-                
-                fig.update_layout(
-                    title=f"Lettura: {time_col[idx]}",
-                    yaxis=dict(range=[-limite_y, limite_y], title="Spostamento (mm)"),
-                    xaxis=dict(tickangle=-90),
-                    template="plotly_white", height=600
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            with tab2:
-                freq = st.selectbox("Frequenza Report:", ["Tutti i dati", "Giornaliero", "Settimanale"])
-                if st.button("🚀 Genera Report Word"):
-                    doc = Document()
-                    doc.add_heading(f"Report {sel_sheet} - Asse {asse}", 0)
-                    doc.add_paragraph(stats)
+                prog = st.progress(0)
+                for i, (date, row) in enumerate(df_res.iterrows()):
+                    plt.figure(figsize=(10, 4))
+                    plt.plot(sensori_linea, row.values, marker='o', color='red')
+                    plt.axhline(0, color='black', linewidth=0.5)
+                    plt.title(f"Data: {date.strftime('%d/%m/%Y')}")
+                    plt.ylim(-limite_y, limite_y)
+                    plt.grid(True, alpha=0.3)
                     
-                    # Campionamento
-                    df_res = pd.DataFrame(data_plot, index=time_col)
-                    if freq == "Giornaliero": df_res = df_res.resample('D').mean().dropna()
-                    elif freq == "Settimanale": df_res = df_res.resample('W').mean().dropna()
-                    
-                    for d, row in df_res.iterrows():
-                        plt.figure(figsize=(10, 4))
-                        plt.plot(labels, row.values, marker='o', color='red')
-                        plt.title(f"Data: {d.strftime('%d/%m/%Y')}")
-                        plt.grid(True, alpha=0.3)
-                        plt.ylim(-limite_y, limite_y)
-                        plt.xticks(rotation=90)
-                        
-                        buf = BytesIO()
-                        plt.savefig(buf, format='png', bbox_inches='tight')
-                        doc.add_picture(buf, width=Inches(6))
-                        plt.close()
+                    buf = BytesIO()
+                    plt.savefig(buf, format='png', bbox_inches='tight')
+                    plt.close()
+                    doc.add_picture(buf, width=Inches(6))
+                    doc.add_paragraph(f"Analisi del {date.strftime('%d/%m/%Y')}")
+                    prog.progress((i+1)/len(df_res))
+                
+                final_buf = BytesIO()
+                doc.save(final_buf)
+                st.download_button("Scarica Report Word", final_buf.getvalue(), f"Report_{sel_linea}.docx")
 
-                    out = BytesIO()
-                    doc.save(out)
-                    st.download_button("⬇️ Scarica Documento", out.getvalue(), "Report.docx")
         else:
-            st.error("Nessun sensore trovato per l'asse selezionato.")
+            st.error("Non è stato possibile mappare i sensori di ARRAY sui fogli ETS_1...4. Controlla i nomi delle colonne.")
