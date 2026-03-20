@@ -3,14 +3,12 @@ import pandas as pd
 import json
 import os
 import requests
-import base64
-from streamlit_folium import st_folium
 import folium
-from folium import IFrame
-from folium.raster_layers import ImageOverlay
 from folium.features import DivIcon
+from streamlit_folium import st_folium
 from PIL import Image
 from io import BytesIO
+import base64
 
 CONFIG_FILE = "mac_positions.json"
 
@@ -43,7 +41,6 @@ def parse_excel(file):
     xls = pd.ExcelFile(file)
     if "NAME" not in xls.sheet_names:
         return None
-
     df = pd.read_excel(xls, sheet_name="NAME", header=None).fillna("")
     ana = {}
     for c in range(1, df.shape[1]):
@@ -61,7 +58,7 @@ def parse_excel(file):
 
 # ----------------- MAIN -----------------
 def run_map_manager():
-    st.title("🌍 Dashboard MAC Interattiva")
+    st.title("🌍 Dashboard MAC Interattiva con Overlay Manipolabile")
 
     # ---------- GESTIONE EXCEL ----------
     with st.expander("📂 Carica o Cambia Excel", expanded='anagrafica' not in st.session_state):
@@ -70,12 +67,16 @@ def run_map_manager():
             ana = parse_excel(file_input)
             if ana:
                 st.session_state['anagrafica'] = ana
-                st.success("Excel caricato")
+                save_mac([])  # reset punti salvati quando cambio Excel
+                st.success("Excel caricato e mappa resettata")
             else:
                 st.error("Foglio NAME non trovato")
         if 'anagrafica' in st.session_state:
             if st.button("🔄 Cambia Excel"):
-                del st.session_state['anagrafica']
+                for k in ['anagrafica','center']:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                save_mac([])
                 st.rerun()
 
     if 'anagrafica' not in st.session_state:
@@ -94,19 +95,12 @@ def run_map_manager():
     with col3:
         target = st.selectbox("🎯 Sensore da posizionare", sensori_filtrati)
 
-    # ---------- OVERLAY PLANIMETRIA ----------
-    with st.expander("🖼️ Overlay Planimetria"):
-        up_img = st.file_uploader("Carica immagine", type=['png', 'jpg', 'jpeg'])
-        scale_slider = st.slider("Scala", 0.0001, 0.02, 0.002, 0.0001)
-        rotation_slider = st.slider("Rotazione (°)", -180, 180, 0)
-        opacity_slider = st.slider("Trasparenza", 0.0, 1.0, 0.5)
-
     # ---------- CENTRO MAPPA ----------
     if 'center' not in st.session_state:
         if punti_salvati:
             st.session_state.center = [punti_salvati[0]['lat'], punti_salvati[0]['lon']]
         else:
-            st.session_state.center = [45.4642, 9.1900]
+            st.session_state.center = [45.4642, 9.1900]  # Milano
 
     city = st.text_input("🔍 Cerca città")
     if city:
@@ -116,51 +110,37 @@ def run_map_manager():
 
     m = folium.Map(location=st.session_state.center, zoom_start=18)
 
-    # ---------- OVERLAY IMAGE INTERATTIVO ----------
+    # ---------- OVERLAY IMAGE INTERATTIVO TRASFORMABILE ----------
+    up_img = st.file_uploader("🖼️ Carica immagine da manipolare", type=['png','jpg','jpeg'])
     if up_img:
         img = Image.open(up_img).convert("RGBA")
-        w, h = img.size
-        aspect_ratio = h / w
-        if rotation_slider != 0:
-            img = img.rotate(-rotation_slider, expand=True)
         buf = BytesIO()
         img.save(buf, format="PNG")
         b64_img = base64.b64encode(buf.getvalue()).decode()
+
         lat, lon = st.session_state.center
-        width = scale_slider
-        height = scale_slider * aspect_ratio
-        bounds = [[lat - height, lon - width], [lat + height, lon + width]]
 
-        overlay = ImageOverlay(image=f"data:image/png;base64,{b64_img}", bounds=bounds, opacity=opacity_slider)
-        overlay.add_to(m)
+        # Inseriamo il plugin Leaflet.DistortableImage
+        plugin_css = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.distortableimage/dist/leaflet.distortableimage.css"/>'
+        plugin_js  = '<script src="https://cdn.jsdelivr.net/npm/leaflet.distortableimage/dist/leaflet.distortableimage.js"></script>'
+        m.get_root().html.add_child(folium.Element(plugin_css + plugin_js))
 
-        # Aggiungiamo JS per rendere l'overlay trascinabile
-        draggable_js = f"""
+        img_js = f"""
         <script>
-        var img_layer = {overlay.get_name()};
-        img_layer.on('add', function() {{
-            img_layer.getElement().style.cursor = 'move';
-            L.DomEvent.on(img_layer.getElement(), 'mousedown', function(e) {{
-                var startLat = e.latlng ? e.latlng.lat : {lat};
-                var startLng = e.latlng ? e.latlng.lng : {lon};
-                var map = img_layer._map;
-                function moveHandler(event) {{
-                    var deltaLat = event.latlng.lat - startLat;
-                    var deltaLng = event.latlng.lng - startLng;
-                    var bounds = img_layer.getBounds();
-                    var newBounds = [
-                        [bounds.getSouthWest().lat + deltaLat, bounds.getSouthWest().lng + deltaLng],
-                        [bounds.getNorthEast().lat + deltaLat, bounds.getNorthEast().lng + deltaLng]
-                    ];
-                    img_layer.setBounds(newBounds);
-                }}
-                map.on('mousemove', moveHandler);
-                map.once('mouseup', function(){{ map.off('mousemove', moveHandler); }});
-            }});
-        }});
+        var imgUrl = "data:image/png;base64,{b64_img}";
+        var bounds = [[{lat-0.002},{lon-0.002}], [{lat+0.002},{lon+0.002}]];
+        var imgOverlay = L.distortableImageOverlay(imgUrl, {{
+            corners: [
+                bounds[0],
+                [bounds[0][0], bounds[1][1]],
+                bounds[1],
+                [bounds[1][0], bounds[0][1]]
+            ]
+        }}).addTo({{map}});
+        imgOverlay.editing.enable();
         </script>
         """
-        m.get_root().html.add_child(folium.Element(draggable_js))
+        m.get_root().html.add_child(folium.Element(img_js.replace("{map}", m.get_name())))
 
     # ---------- MARKER CON NOME ----------
     for p in punti_salvati:
@@ -168,20 +148,11 @@ def run_map_manager():
         is_visible = nome_full in sensori_visibili
         is_selected = target == nome_full
         if is_visible:
-            folium.Marker(
-                [p['lat'], p['lon']],
-                icon=folium.Icon(color='blue' if is_selected else 'red'),
-                tooltip=p['nome']
-            ).add_to(m)
-            # Aggiunge nome come testo sulla mappa
-            folium.map.Marker(
-                [p['lat'], p['lon']],
-                icon=DivIcon(
-                    icon_size=(150,36),
-                    icon_anchor=(0,0),
-                    html=f'<div style="font-size:12px;color:black;font-weight:bold">{p["nome"]}</div>',
-                )
-            ).add_to(m)
+            folium.Marker([p['lat'], p['lon']], icon=folium.Icon(color='blue' if is_selected else 'red'),
+                          tooltip=p['nome']).add_to(m)
+            folium.map.Marker([p['lat'], p['lon']],
+                              icon=DivIcon(icon_size=(150,36), icon_anchor=(0,0),
+                                           html=f'<div style="font-size:12px;color:black;font-weight:bold">{p["nome"]}</div>')).add_to(m)
 
     # ---------- RENDER MAPPA ----------
     output = st_folium(m, width=1400, height=650)
