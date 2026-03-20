@@ -65,7 +65,6 @@ def parse_excel(file):
 
     return ana
 
-
 # ------------------ MAIN ------------------
 def run_map_manager():
 
@@ -95,15 +94,32 @@ def run_map_manager():
     ana = st.session_state['anagrafica']
     punti = load_json(CONFIG_FILE) or []
 
-    # ----------- CONTROLLI -----------
-    col1, col2 = st.columns(2)
+    # ----------- CONTROLLI SENSORI -----------
+    col1, col2, col3 = st.columns(3)
 
+    # 👁️ FILTRO DATLOGGER
     with col1:
-        sel_dls = st.multiselect("Datalogger", list(ana.keys()), default=list(ana.keys()))
+        sel_dls = st.multiselect(
+            "📡 Datalogger",
+            list(ana.keys()),
+            default=list(ana.keys())
+        )
 
+    # 👁️ FILTRO SENSORI MULTIPLI (VISUALIZZAZIONE)
     with col2:
-        sensori = [f"{d} | {s}" for d in sel_dls for s in ana[d]]
-        target = st.selectbox("Sensore", sensori)
+        sensori_filtrati = [f"{d} | {s}" for d in sel_dls for s in ana[d]]
+        sensori_visibili = st.multiselect(
+            "👁️ Sensori visibili",
+            sensori_filtrati,
+            default=sensori_filtrati
+        )
+
+    # 🎯 SENSORE ATTIVO (UNO SOLO PER POSIZIONAMENTO)
+    with col3:
+        target = st.selectbox(
+            "🎯 Sensore da posizionare",
+            sensori_filtrati
+        )
 
     # ----------- OVERLAY SETTINGS -----------
     overlay = load_json(OVERLAY_FILE) or {}
@@ -168,15 +184,18 @@ def run_map_manager():
 
     # ----------- MARKER -----------
     for p in punti:
-        is_sel = target and p['nome'] in target
+        nome_full = f"{p['dl']} | {p['nome']}"
+        is_visible = nome_full in sensori_visibili
+        is_selected = target == nome_full
 
-        folium.Marker(
-            [p['lat'], p['lon']],
-            popup=f"{p['dl']} - {p['nome']}",
-            icon=folium.Icon(color='blue' if is_sel else 'red')
-        ).add_to(m)
+        if is_visible:
+            folium.Marker(
+                [p['lat'], p['lon']],
+                popup=f"{p['dl']} - {p['nome']}",
+                icon=folium.Icon(color='blue' if is_selected else 'red')
+            ).add_to(m)
 
-    # ----------- RENDER -----------
+    # ----------- RENDER ----------- 
     out = st_folium(m, width=1400, height=650)
 
     # ----------- CLICK SAVE -----------
@@ -209,3 +228,8 @@ def run_map_manager():
         if st.button("🗑 Reset"):
             save_json(CONFIG_FILE, [])
             st.rerun()
+
+
+# --- CHIAMATA FUNZIONE ---
+if __name__ == "__main__":
+    run_map_manager()
