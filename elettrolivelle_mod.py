@@ -8,15 +8,15 @@ import os
 from io import BytesIO
 from datetime import datetime
 
-# --- GESTIONE LIBRERIA WORD ---
+# --- LIBRERIA WORD ---
 try:
     from docx import Document
     from docx.shared import Inches
-    WORD_AVAILABLE = True
-except ImportError:
-    WORD_AVAILABLE = False
+    WORD_OK = True
+except:
+    WORD_OK = False
 
-# --- LOGICA COLORI VBA ---
+# --- LOGICA COLORI ---
 def get_vba_color(val):
     v = abs(val)
     if pd.isna(v): return "gray"
@@ -28,162 +28,143 @@ def get_vba_color(val):
     return "rgb(112, 48, 160)"
 
 def run_elettrolivelle():
-    st.title("📏 Monitoraggio Elettrolivelle - Sistema ARRAY")
+    st.title("📏 Sistema Integrato Elettrolivelle")
     
-    up = st.file_uploader("Carica File Excel (Fabro...)", type=['xlsm', 'xlsx'])
+    up = st.file_uploader("Carica Excel Fabro", type=['xlsm', 'xlsx'])
     
     if up:
         xls = pd.ExcelFile(up)
         
-        # 1. LETTURA ROBUSTA FOGLIO ARRAY
+        # 1. ANALISI ARRAY (SEQUENZA FISICA)
         if "ARRAY" not in xls.sheet_names:
-            st.error("ERRORE: Foglio 'ARRAY' non trovato!")
+            st.error("Manca il foglio 'ARRAY'.")
             return
         
         df_array = pd.read_excel(xls, "ARRAY", header=None)
-        # La colonna 0 contiene i nomi delle linee (es. ETS_1, ETS_2...)
         linee_nomi = df_array[0].dropna().unique().tolist()
         
-        col_selezione, col_info = st.columns([1, 2])
-        with col_selezione:
-            sel_linea = st.selectbox("Seleziona Linea da ARRAY", linee_nomi)
-        
-        # Estraiamo i sensori: prendiamo la riga corrispondente e saltiamo la prima colonna
-        riga = df_array[df_array[0] == sel_linea].iloc[0, 1:]
-        sequenza_array = riga.dropna().astype(str).tolist()
-        
-        with col_info:
-            st.caption(f"Sequenza rilevata ({len(sequenza_array)} sensori):")
-            st.write(" → ".join(sequenza_array))
+        # 2. INTERFACCIA SELEZIONE
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            sel_linea = st.selectbox("Linea", linee_nomi)
+        with col2:
+            asse = st.selectbox("Asse", ["X", "Y"])
+        with col3:
+            tipo_calc = st.radio("Visualizza", ["Spostamenti", "Cumulata"], horizontal=True)
 
-        # 2. SIDEBAR PARAMETRI
-        with st.sidebar:
-            st.header("⚙️ Impostazioni")
-            asse = st.selectbox("Seleziona Asse", ["X", "Y"])
-            l_barra = st.number_input("Lunghezza Barra (mm)", value=3000)
-            sigma_val = st.slider("Filtro Gauss (Sigma)", 1.0, 5.0, 2.0)
-            limite_y = st.number_input("Limite Grafico +/- (mm)", value=20)
-            st.divider()
-            mostra_tabella = st.checkbox("Mostra Tabella Dati Elaborati")
+        # Estrazione sequenza ordinata
+        sequenza = df_array[df_array[0] == sel_linea].iloc[0, 1:].dropna().astype(str).tolist()
 
-        # 3. RICERCA DATI NEI FOGLI ETS_1, ETS_2, etc.
-        df_sorgente = None
-        for s_name in xls.sheet_names:
-            if s_name.startswith("ETS_") and not s_name.endswith(("X", "Y", "C", "P0")):
-                temp = pd.read_excel(xls, s_name)
-                # Verifichiamo se i sensori della linea sono in questo foglio
-                if any(str(sequenza_array[0]) in str(c) for c in temp.columns):
-                    df_sorgente = temp
+        # 3. IDENTIFICAZIONE FOGLIO DATI (ETS_1, ETS_2...)
+        df_raw = None
+        for sn in xls.sheet_names:
+            if sn.startswith("ETS_") and len(sn) <= 6: # Evita ETS_1X etc.
+                temp = pd.read_excel(xls, sn)
+                if any(str(sequenza[0]) in str(c) for c in temp.columns):
+                    df_raw = temp
                     break
         
-        if df_sorgente is not None:
-            time_col = pd.to_datetime(df_sorgente.iloc[:, 0])
+        if df_raw is not None:
+            time_col = pd.to_datetime(df_raw.iloc[:, 0])
             
-            # --- ELABORAZIONE DATI ---
-            lista_serie = []
-            labels_finali = []
-            
-            for s_id in sequenza_array:
-                # Cerchiamo la colonna che contiene l'ID e l'asse
+            # --- MOTORE DI CALCOLO ---
+            with st.sidebar:
+                st.header("Parametri VBA")
+                l_barra = st.number_input("Lunghezza Barra (mm)", value=3000)
+                sigma = st.slider("Gauss (Sigma)", 1.0, 5.0, 2.0)
+                range_y = st.number_input("Range Y (+/- mm)", value=20.0)
+
+            elaborati = []
+            for s_id in sequenza:
+                # Cerca colonna: deve contenere ID (es. CL_01) e ASSE (es. _X)
                 pattern = rf"{s_id}.*_{asse}"
-                match = [c for c in df_sorgente.columns if re.search(pattern, str(c), re.IGNORECASE)]
+                col = [c for c in df_raw.columns if re.search(pattern, str(c), re.IGNORECASE)]
                 
-                if match:
-                    col_name = match[0]
-                    # Conversione Trigonometrica
-                    val_rad = np.radians(df_sorgente[col_name].replace(0, np.nan))
-                    val_mm = l_barra * np.sin(val_rad)
-                    # Delta C0 (Valore - Prima lettura valida)
-                    serie_c0 = val_mm - val_mm.iloc[0]
-                    
+                if col:
+                    # VBA logic: Rad -> Sin * L
+                    vals = l_barra * np.sin(np.radians(df_raw[col[0]].replace(0, np.nan)))
+                    # C0: Delta rispetto alla prima riga
+                    delta = vals - vals.iloc[0]
                     # Filtro Gauss
-                    m, s = serie_c0.mean(), serie_c0.std()
-                    serie_c0 = serie_c0.mask(np.abs(serie_c0 - m) > (s * sigma_val))
-                    
-                    # Filtro Soglie Hard VBA
-                    serie_c0 = serie_c0.mask((serie_c0 > 20) | (serie_c0 < -30))
-                    
-                    lista_serie.append(serie_c0)
-                    labels_finali.append(s_id)
+                    m, s = delta.mean(), delta.std()
+                    delta = delta.mask(np.abs(delta - m) > (s * sigma))
+                    # Filtro Soglie
+                    delta = delta.mask((delta > 20) | (delta < -30))
+                    elaborati.append(delta)
                 else:
-                    # Se il sensore manca, inseriamo colonna vuota per non rompere la sequenza
-                    lista_serie.append(pd.Series([np.nan]*len(df_sorgente)))
-                    labels_finali.append(f"{s_id} (Assente)")
+                    elaborati.append(pd.Series([np.nan]*len(df_raw)))
 
-            df_finale = pd.concat(lista_serie, axis=1)
-            df_finale.columns = labels_finali
+            df_final = pd.concat(elaborati, axis=1)
+            df_final.columns = sequenza
 
-            # --- DASHBOARD ---
-            tab_grafico, tab_stampe = st.tabs(["📊 Grafico Interattivo", "📝 Generazione Report"])
+            if tipo_calc == "Cumulata":
+                df_plot = df_final.cumsum(axis=1)
+            else:
+                df_plot = df_final
 
-            with tab_grafico:
-                idx = st.slider("Sposta cursore temporale", 0, len(time_col)-1, len(time_col)-1)
-                st.write(f"**Data Lettura:** {time_col[idx].strftime('%d/%m/%Y %H:%M:%S')}")
-                
-                curr_data = df_finale.iloc[idx]
-                colors = [get_vba_color(v) for v in curr_data]
-                
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=labels_finali, y=curr_data,
-                    mode='lines+markers+text',
-                    text=[f"{v:.2f}" if pd.notnull(v) else "" for v in curr_data],
-                    textposition="top center",
-                    marker=dict(size=12, color=colors, line=dict(width=1, color="black")),
-                    line=dict(color="rgba(150,150,150,0.5)", width=2)
-                ))
-                
-                fig.update_layout(
-                    yaxis=dict(range=[-limite_y, limite_y], title="Spostamento (mm)"),
-                    xaxis=dict(type='category', title="Sequenza Fisica Sensori"),
-                    template="plotly_white", height=550
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                
-                if mostra_tabella:
-                    st.dataframe(df_finale.style.format("{:.2f}").highlight_null(color="red"))
+            # --- GRAFICO INTERATTIVO ---
+            idx = st.slider("Data Lettura", 0, len(time_col)-1, len(time_col)-1)
+            curr_time = time_col.iloc[idx]
+            
+            fig = go.Figure()
+            y_vals = df_plot.iloc[idx]
+            # Colore basato sempre sullo spostamento del singolo sensore (df_final)
+            colors = [get_vba_color(v) for v in df_final.iloc[idx]]
 
-            with tab_stampe:
-                if not WORD_AVAILABLE:
-                    st.error("Libreria 'python-docx' non installata. Impossibile generare Report.")
+            fig.add_trace(go.Scatter(
+                x=sequenza, y=y_vals,
+                mode='lines+markers+text',
+                text=[f"{v:.2f}" if pd.notnull(v) else "" for v in y_vals],
+                textposition="top center",
+                marker=dict(size=12, color=colors, line=dict(width=1, color="black")),
+                line=dict(color="gray", width=2)
+            ))
+            
+            fig.update_layout(
+                title=f"Analisi {sel_linea} - {curr_time.strftime('%d/%m/%Y %H:%M')}",
+                yaxis=dict(range=[-range_y, range_y], title="mm"),
+                template="plotly_white", height=600
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # --- SEZIONE STAMPE ---
+            st.divider()
+            st.subheader("📝 Generazione Report Word")
+            c1, c2 = st.columns(2)
+            with c1:
+                freq = st.selectbox("Campionamento Report", ["Giornaliero", "Settimanale", "Tutti i dati"])
+            
+            if st.button("🚀 GENERA REPORT COMPLETO"):
+                if not WORD_OK:
+                    st.error("Errore: libreria Word non disponibile.")
                 else:
-                    st.subheader("Configurazione Report Word")
-                    col_f1, col_f2 = st.columns(2)
-                    with col_f1:
-                        campionamento = st.radio("Seleziona frequenza stampe:", ["Tutti i dati", "Giornaliero", "Settimanale"])
+                    doc = Document()
+                    doc.add_heading(f"Report {sel_linea} - Asse {asse}", 0)
                     
-                    if st.button("🚀 GENERA E SCARICA REPORT"):
-                        doc = Document()
-                        doc.add_heading(f"Report Monitoraggio - Linea {sel_linea}", 0)
-                        doc.add_paragraph(f"Asse analizzato: {asse} | Lunghezza barra: {l_barra}mm")
+                    df_rep = df_plot.copy()
+                    df_rep.index = time_col
+                    if freq == "Giornaliero": df_rep = df_rep.resample('D').mean().dropna(how='all')
+                    elif freq == "Settimanale": df_rep = df_rep.resample('W').mean().dropna(how='all')
+
+                    prog = st.progress(0)
+                    for i, (d, row) in enumerate(df_rep.iterrows()):
+                        plt.figure(figsize=(10, 4))
+                        plt.plot(sequenza, row.values, marker='o', color='red')
+                        plt.axhline(0, color='black', alpha=0.3)
+                        plt.title(f"Lettura: {d.strftime('%d/%m/%Y')}")
+                        plt.ylim(-range_y, range_y)
+                        plt.xticks(rotation=45)
+                        plt.grid(True, alpha=0.2)
                         
-                        # Resampling per non fare 1000 pagine
-                        df_report = df_finale.copy()
-                        df_report.index = time_col
-                        if campionamento == "Giornaliero": df_report = df_report.resample('D').mean().dropna(how='all')
-                        elif campionamento == "Settimanale": df_report = df_report.resample('W').mean().dropna(how='all')
-                        
-                        bar_progress = st.progress(0)
-                        for i, (data_rif, row) in enumerate(df_report.iterrows()):
-                            # Creazione grafico statico con Matplotlib per Word
-                            plt.figure(figsize=(10, 4))
-                            plt.plot(labels_finali, row.values, marker='o', color='red', linewidth=1.5)
-                            plt.axhline(0, color='black', linewidth=0.5)
-                            plt.title(f"Lettura del {data_rif.strftime('%d/%m/%Y')}")
-                            plt.ylim(-limite_y, limite_y)
-                            plt.xticks(rotation=45)
-                            plt.grid(True, alpha=0.3)
-                            
-                            buf = BytesIO()
-                            plt.savefig(buf, format='png', bbox_inches='tight')
-                            plt.close()
-                            
-                            doc.add_heading(f"Data: {data_rif.strftime('%d/%m/%Y')}", level=2)
-                            doc.add_picture(buf, width=Inches(6))
-                            bar_progress.progress((i+1)/len(df_report))
-                        
-                        out_word = BytesIO()
-                        doc.save(out_word)
-                        st.download_button("⬇️ SCARICA FILE WORD", out_word.getvalue(), f"Report_{sel_linea}_{asse}.docx")
+                        b = BytesIO()
+                        plt.savefig(b, format='png', bbox_inches='tight')
+                        plt.close()
+                        doc.add_picture(b, width=Inches(6))
+                        prog.progress((i+1)/len(df_rep))
+                    
+                    final_b = BytesIO()
+                    doc.save(final_b)
+                    st.download_button("💾 Scarica Word", final_b.getvalue(), f"Report_{sel_linea}.docx")
+
         else:
-            st.error("Dati non trovati. Assicurati che i nomi in ARRAY corrispondano ai nomi delle colonne nei fogli ETS.")
+            st.error("Non trovo fogli ETS compatibili con la linea selezionata.")
