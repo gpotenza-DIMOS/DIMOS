@@ -16,11 +16,12 @@ except ImportError:
     DOCX_AVAILABLE = False
 
 def run_plotter():
+    # Logo DIMOS
     col_l, _ = st.columns([1, 2])
     with col_l:
         if os.path.exists("logo_dimos.jpg"): st.image("logo_dimos.jpg", width=300)
     
-    st.header("📈 Plotter DIMOS - Multisensore & Stampe Speculari")
+    st.header("📈 Plotter DIMOS - Gestione Multisensore Completa")
 
     file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="p_up")
     if not file_input: return
@@ -34,10 +35,10 @@ def run_plotter():
     df.columns = [str(c).strip() for c in df.columns]
     df['Data e Ora'] = pd.to_datetime(df['Data e Ora'])
 
-    # --- 1. MAPPATURA INTEGRALE (ESPLOSIONE MULTISENSORE) ---
+    # --- 1. MAPPATURA ESPLOSA (MULTISENSORE) ---
+    # Questa sezione scansiona TUTTE le colonne per ogni ID Web trovato
     anagrafica = {}
     
-    # Leggiamo NAME: Riga 0=DL, Riga 1=Sensore, Riga 2=WebID (es. CO_9277 CL_01)
     for c_idx in range(1, df_name.shape[1]):
         dl_label = str(df_name.iloc[0, c_idx]).strip()
         sens_label = str(df_name.iloc[1, c_idx]).strip()
@@ -46,23 +47,23 @@ def run_plotter():
         if dl_label not in anagrafica: anagrafica[dl_label] = {}
         if sens_label not in anagrafica[dl_label]: anagrafica[dl_label][sens_label] = {}
         
-        # SCANSIONE TOTALE: Cerchiamo TUTTE le colonne che contengono il WebID
-        # Questo serve per prendere X, Y, Z, T1, ecc. dello stesso SD_301
+        # Cerchiamo tutte le colonne che iniziano con il web_id (es. CO_9277 CL_01)
         for col_data in df.columns:
-            if web_id in col_data:
-                # Estraiamo la grandezza (es. X [°], T1 [°C], LM [m])
-                # Rimuoviamo il WebID dal nome colonna per pulire l'etichetta
-                suffix = col_data.replace(web_id, "").strip().lstrip('_')
-                if not suffix and "[" in col_data:
-                    suffix = re.search(r'\[.*?\]', col_data).group(0)
+            if col_data.startswith(web_id):
+                # Estraiamo la grandezza specifica (es. X [°], LM [m])
+                # Puliamo l'etichetta rimuovendo il prefisso web
+                grandezza = col_data.replace(web_id, "").strip().lstrip('_')
+                if not grandezza and "[" in col_data:
+                    grandezza = re.search(r'\[.*?\]', col_data).group(0)
                 
-                anagrafica[dl_label][sens_label][suffix] = col_data
+                # Salviamo la colonna reale nel dizionario delle grandezze del sensore
+                anagrafica[dl_label][sens_label][grandezza] = col_data
 
-    # --- 2. FILTRI SIDEBAR ---
-    st.sidebar.header("⚙️ Analisi & Filtri")
+    # --- 2. SIDEBAR FILTRI (GAUSS E ZERI) ---
+    st.sidebar.header("⚙️ Parametri Analisi")
     clean_zeros = st.sidebar.checkbox("Rimuovi Zeri", value=True)
     use_gauss = st.sidebar.checkbox("Filtro Gauss (Sigma)", value=True)
-    sigma_val = st.sidebar.slider("Sigma (Sensibilità)", 1.0, 5.0, 2.0, 0.1)
+    sigma_val = st.sidebar.slider("Livello Sigma", 1.0, 5.0, 2.0, 0.1)
     grado_poly = st.sidebar.selectbox("Trend Polinomiale", [0, 2, 3, 4], format_func=lambda x: "OFF" if x==0 else f"Grado {x}")
 
     # --- 3. SELEZIONE MULTIPLA ---
@@ -79,16 +80,17 @@ def run_plotter():
     with c2: 
         s_sens = st.multiselect("Sensori", opts_s)
     
+    # RACCOLTA GRANDEZZE: Qui ora appariranno TUTTE le 8 opzioni per SD_301
     opts_g = set()
     for it in s_sens:
         d, s = it.split(" | ")
         opts_g.update(anagrafica[d][s].keys())
+    
     with c3: 
-        # Qui ora vedrai X [°], Y [°], Z [°], T1 [°C], T2 [°C], LI [m], LQ, LM [m]
         s_grands = st.multiselect("Grandezze Fisiche", sorted(list(opts_g)))
 
     # --- 4. MOTORE DI CALCOLO ---
-    def get_clean_y(col):
+    def get_clean_series(col):
         y = df_f[col].copy()
         if clean_zeros: y = y.replace(0, np.nan)
         if use_gauss and y.notna().sum() > 5:
@@ -103,31 +105,31 @@ def run_plotter():
             d, s = it.split(" | ")
             for g in s_grands:
                 if g in anagrafica[d][s]:
-                    real_col = anagrafica[d][s][g]
-                    y_plot = get_clean_y(real_col)
-                    fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y_plot, name=f"{s} - {g}"))
+                    c_real = anagrafica[d][s][g]
+                    y_p = get_clean_series(c_real)
+                    fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y_p, name=f"{s} - {g}"))
                     
                     if grado_poly > 0:
-                        x_n = np.arange(len(y_plot))
-                        v = y_plot.notna()
+                        x_n = np.arange(len(y_p))
+                        v = y_p.notna()
                         if v.any():
-                            p = np.poly1d(np.polyfit(x_n[v], y_plot[v], grado_poly))
+                            p = np.poly1d(np.polyfit(x_n[v], y_p[v], grado_poly))
                             fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=p(x_n), 
                                                    name=f"Trend {s} {g}", line=dict(dash='dot')))
 
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 6. PRODUZIONE STAMPE (PRODUCE WORD E EXCEL SPECULARI) ---
+        # --- 6. COMANDI DI PRODUZIONE STAMPE (REPLICANO LA VISUALIZZAZIONE) ---
         st.divider()
-        st.subheader("💾 Comandi di Stampa (Produzione File)")
+        st.subheader("💾 Comandi di Stampa (Produzione Report)")
         cw, ce = st.columns(2)
 
         with cw:
-            if st.button("📝 AVVIA PRODUZIONE WORD"):
+            if st.button("📝 PRODUCI REPORT WORD"):
                 doc = Document()
                 doc.add_heading('REPORT MONITORAGGIO DIMOS', 0)
-                doc.add_paragraph(f"Configurazione speculare: Gauss {sigma_val}, Rimozione Zeri {clean_zeros}")
-                # Il grafico nel Word sarà IDENTICO a quello sopra
+                doc.add_paragraph(f"Visualizzazione speculare: Gauss {sigma_val}, Zeri {clean_zeros}")
+                # Il grafico nel Word è esattamente lo stesso visualizzato
                 img_io = BytesIO(pio.to_image(fig, format="png", width=1000, height=500))
                 doc.add_picture(img_io, width=Inches(6.2))
                 
@@ -135,14 +137,14 @@ def run_plotter():
                 st.download_button("📥 Scarica Report Word", target_w.getvalue(), "Report.docx")
 
         with ce:
-            if st.button("📊 AVVIA PRODUZIONE EXCEL"):
-                # Crea un Excel con solo le serie temporali visualizzate
+            if st.button("📊 PRODUCI EXCEL DATI"):
+                # Excel speculare con solo i dati e i filtri scelti a video
                 df_out = pd.DataFrame({'Data Ora': df_f['Data e Ora']})
                 for it in s_sens:
                     d, s = it.split(" | ")
                     for g in s_grands:
                         if g in anagrafica[d][s]:
-                            df_out[f"{s}_{g}"] = get_clean_y(anagrafica[d][s][g])
+                            df_out[f"{s}_{g}"] = get_clean_series(anagrafica[d][s][g])
                 
                 target_e = BytesIO()
                 df_out.to_excel(target_e, index=False)
