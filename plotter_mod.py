@@ -6,7 +6,6 @@ import re
 import os
 from io import BytesIO
 
-# --- GESTIONE LIBRERIA STAMPA ---
 try:
     from docx import Document
     from docx.shared import Inches
@@ -16,138 +15,131 @@ except ImportError:
     DOCX_AVAILABLE = False
 
 def run_plotter():
-    # --- LOGO DIMOS ---
+    # --- LOGO E TITOLO ---
     col_logo, _ = st.columns([1, 2])
     with col_logo:
         if os.path.exists("logo_dimos.jpg"):
             st.image("logo_dimos.jpg", width=300)
-    
-    st.header("📈 Monitoraggio Sensori - Analisi Temporale")
+    st.header("📈 Analisi Temporale e Multisensore")
 
-    file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="pl_up")
+    file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="plot_up")
     if not file_input:
-        st.info("In attesa del file Excel...")
+        st.info("Carica un file Excel per iniziare.")
         return
 
     xls = pd.ExcelFile(file_input)
     
-    # --- 1. MAPPATURA ANAGRAFICA (Foglio NAME) ---
+    # --- 1. COSTRUZIONE ANAGRAFICA (DA LAYER NAME O WEB) ---
+    # Struttura: { "Datalogger": { "Sensore": { "Grandezza Fisica": "Nome Colonna Originale" } } }
     anagrafica = {}
-    mapping_name = None
+    
+    # Carico il layer NAME se esiste
+    df_name = None
     if "NAME" in xls.sheet_names:
-        mapping_name = pd.read_excel(xls, sheet_name="NAME", header=None)
+        df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
 
+    # Scelta foglio dati
     sheets_dati = [s for s in xls.sheet_names if s not in ["NAME", "ARRAY", "Info"]]
-    sel_sheet = st.selectbox("Seleziona Layer Dati", sheets_dati)
+    sel_sheet = st.selectbox("Seleziona Foglio Dati", sheets_dati)
     df = pd.read_excel(xls, sheet_name=sel_sheet)
     df.columns = [str(c).strip() for c in df.columns]
     
     if 'Data e Ora' not in df.columns:
-        st.error("Colonna 'Data e Ora' mancante.")
+        st.error("Colonna 'Data e Ora' non trovata.")
         return
     
-    df['Data e Ora'] = pd.to_datetime(df['Data e Ora'])
-    time_col = df['Data e Ora']
+    time_col = pd.to_datetime(df['Data e Ora'])
 
-    # --- 2. LOGICA DI ESTRAZIONE RIGIDA ---
-    cols_sensori = [c for c in df.columns if '[' in c]
-    for col in cols_sensori:
-        dl_nome, sens_nome = "Generico", "Ignoto"
+    # Popolamento Gerarchico
+    cols_data = [c for c in df.columns if '[' in c]
+    for col in cols_data:
+        dl, sens, grandezza = None, None, None
         
-        # Match con foglio NAME (Riga 3 = Nome Web)
-        if mapping_name is not None:
-            for c_idx in range(1, mapping_name.shape[1]):
-                nome_web_r3 = str(mapping_name.iloc[2, c_idx]).strip()
+        # Caso 1: Uso il foglio NAME (Riga 1: DL, Riga 2: Sens, Riga 3: Web)
+        if df_name is not None:
+            for c_idx in range(1, df_name.shape[1]):
+                nome_web_r3 = str(df_name.iloc[2, c_idx]).strip()
                 if nome_web_r3 in col:
-                    dl_nome = str(mapping_name.iloc[0, c_idx]).strip()
-                    sens_nome = str(mapping_name.iloc[1, c_idx]).strip()
+                    dl = str(df_name.iloc[0, c_idx]).strip()
+                    sens = str(df_name.iloc[1, c_idx]).strip()
+                    # La grandezza è ciò che resta dopo il nome web nel nome colonna
+                    grandezza = col.split(nome_web_r3)[-1].strip()
+                    if not grandezza: # Caso sensore singolo
+                        grandezza = re.search(r'\[.*?\]', col).group(0) if '[' in col else "Dato"
                     break
         
-        # Se non trova in NAME, estrae da stringa
-        if dl_nome == "Generico":
-            dl_nome = col.split(' ')[0]
-            sens_nome = col.split(' ')[1] if len(col.split(' ')) > 1 else "SENS"
+        # Caso 2: Estrazione diretta se NAME non c'è o non ha trovato match
+        if not dl:
+            parts = col.split(' ')
+            dl = parts[0] # CO_9286
+            unita = re.search(r'\[.*?\]', col).group(0) if '[' in col else ""
+            sens_web = col.replace(dl, "").replace(unita, "").strip()
+            
+            if '_' in sens_web: # Multisensore CL_01_X
+                s_parts = sens_web.split('_')
+                sens = "_".join(s_parts[:-1]) if len(s_parts) > 1 else s_parts[0]
+                grandezza = s_parts[-1] + " " + unita
+            else: # Sensore singolo VAR5
+                sens = sens_web
+                grandezza = unita
 
-        # Pulizia Grandezza Fisica (Solo X [°], Y [°], etc.)
-        # Estraiamo l'etichetta finale (es: _X [°] o VAR5 [mm])
-        grandezza_pulita = col.split(sens_nome)[-1].strip() if sens_nome in col else col
-        if '_' in grandezza_pulita and grandezza_pulita.startswith('_'):
-            grandezza_pulita = grandezza_pulita[1:] # Rimuove l'underscore iniziale se presente
+        # Pulizia finale grandezza per avere solo "X [°]", "T1 [°C]", ecc.
+        grandezza = grandezza.lstrip('_').strip()
 
-        if dl_nome not in anagrafica: anagrafica[dl_nome] = {}
-        if sens_nome not in anagrafica[dl_nome]: anagrafica[dl_nome][sens_nome] = {}
-        anagrafica[dl_nome][sens_nome][grandezza_pulita] = col
+        if dl not in anagrafica: anagrafica[dl] = {}
+        if sens not in anagrafica[dl]: anagrafica[dl][sens] = {}
+        anagrafica[dl][sens][grandezza] = col
 
-    # --- 3. BARRA DINAMICA SINISTRA-DESTRA (SLIDER DATE) ---
+    # --- 2. FILTRO TEMPORALE (SLIDER DINAMICO) ---
     st.divider()
-    min_date = time_col.min().to_pydatetime()
-    max_date = time_col.max().to_pydatetime()
-    
-    sel_date = st.slider("Filtro Intervallo Temporale", 
-                         min_value=min_date, 
-                         max_value=max_date, 
-                         value=(min_date, max_date))
-    
-    mask_time = (df['Data e Ora'] >= sel_date[0]) & (df['Data e Ora'] <= sel_date[1])
-    df_filtered = df.loc[mask_time].copy()
+    min_d, max_d = time_col.min(), time_col.max()
+    sel_range = st.slider("Seleziona Intervallo Temporale", min_d.to_pydatetime(), max_d.to_pydatetime(), (min_d.to_pydatetime(), max_d.to_pydatetime()))
+    df_plot = df[(time_col >= sel_range[0]) & (time_col <= sel_range[1])].copy()
 
-    # --- 4. SELEZIONE GERARCHICA ---
+    # --- 3. SELEZIONE A CASCATA ---
     c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1])
     with c1:
         sel_dl = st.selectbox("Datalogger", sorted(anagrafica.keys()))
     with c2:
         sel_sens = st.selectbox("Sensore", sorted(anagrafica[sel_dl].keys()))
     with c3:
-        opzioni_g = anagrafica[sel_dl][sel_sens]
-        sel_grands = st.multiselect("Grandezze", list(opzioni_g.keys()))
+        lista_grandi = anagrafica[sel_dl][sel_sens]
+        sel_grandi = st.multiselect("Grandezze Fisiche", list(lista_grandi.keys()))
     with c4:
-        poly_degree = st.selectbox("Trend Polinomiale", [0, 2, 3, 4], format_func=lambda x: "OFF" if x==0 else f"Grado {x}")
+        grado_poly = st.selectbox("Curva di Tendenza", [0, 2, 3, 4], format_func=lambda x: "OFF" if x==0 else f"Polinomiale Gr. {x}")
 
-    # --- 5. GRAFICO ---
-    if sel_grands:
+    # --- 4. GRAFICO E STAMPA ---
+    if sel_grandi:
         fig = go.Figure()
-        for g in sel_grands:
-            col_raw = opzioni_g[g]
-            y_data = df_filtered[col_raw]
-            x_data = df_filtered['Data e Ora']
+        for g in sel_grandi:
+            real_col = lista_grandi[g]
+            y_vals = df_plot[real_col].interpolate()
+            x_vals = df_plot['Data e Ora']
             
-            # Linea Dati Reali
-            fig.add_trace(go.Scatter(x=x_data, y=y_data, name=f"{g} (Dati)", mode='lines'))
+            # Traccia Dati
+            fig.add_trace(go.Scatter(x=x_vals, y=y_vals, name=f"{g}"))
             
-            # Curva di Tendenza Polinomiale
-            if poly_degree > 0:
-                # Trasformiamo date in numeri per il fit
-                x_numeric = np.arange(len(x_data))
-                # Pulizia nan per il fit
-                valid = ~y_data.isna()
-                if valid.any():
-                    coeffs = np.polyfit(x_numeric[valid], y_data[valid], poly_degree)
-                    poly_func = np.poly1d(coeffs)
-                    y_trend = poly_func(x_numeric)
-                    fig.add_trace(go.Scatter(x=x_data, y=y_trend, 
-                                           name=f"{g} Trend (Grado {poly_degree})", 
-                                           line=dict(dash='dash', width=2)))
+            # Traccia Trend Polinomiale
+            if grado_poly > 0:
+                x_num = np.arange(len(y_vals))
+                mask = ~y_vals.isna()
+                if mask.any():
+                    z = np.polyfit(x_num[mask], y_vals[mask], grado_poly)
+                    p = np.poly1d(z)
+                    fig.add_trace(go.Scatter(x=x_vals, y=p(x_num), name=f"Trend {g}", line=dict(dash='dot')))
 
         fig.update_layout(template="plotly_white", hovermode="x unified", height=600)
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- 6. REPORT WORD ---
-    st.divider()
-    if st.button("🚀 GENERA REPORT WORD"):
-        if DOCX_AVAILABLE:
-            doc = Document()
-            doc.add_heading('REPORT MONITORAGGIO DIMOS', 0)
-            
-            # Esempio: stampa il sensore correntemente selezionato
-            doc.add_heading(f'Datalogger: {sel_dl} - Sensore: {sel_sens}', level=1)
-            
-            fig_report = go.Figure(fig) # Copia il grafico corrente
-            fig_report.update_layout(width=800, height=450)
-            img_stream = BytesIO(pio.to_image(fig_report, format="png"))
-            
-            doc.add_picture(img_stream, width=Inches(6.2))
-            doc.add_paragraph(f"Periodo: {sel_date[0].strftime('%d/%m/%Y')} - {sel_date[1].strftime('%d/%m/%Y')}")
-            
-            target = BytesIO()
-            doc.save(target)
-            st.download_button("📥 Scarica Report", target.getvalue(), f"Report_{sel_sens}.docx")
+        if st.button("🚀 GENERA REPORT WORD"):
+            if DOCX_AVAILABLE:
+                doc = Document()
+                doc.add_heading('REPORT MONITORAGGIO - DIMOS', 0)
+                doc.add_heading(f'Datalogger: {sel_dl} | Sensore: {sel_sens}', level=1)
+                
+                img_io = BytesIO(pio.to_image(fig, format="png", width=1000, height=500))
+                doc.add_picture(img_io, width=Inches(6.2))
+                
+                out = BytesIO()
+                doc.save(out)
+                st.download_button("📥 Scarica Word", out.getvalue(), f"Report_{sel_sens}.docx")
