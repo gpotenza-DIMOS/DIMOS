@@ -1,127 +1,90 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
-from streamlit_folium import st_folium
-import folium
-from folium.plugins import Draw
-from geopy.geocoders import Nominatim
+from PIL import Image
 import io
 
-def modulo_mappe():
-    st.header("🗺️ Modulo Mappe Interattive DIMOS")
+def modulo_mappe_avanzato():
+    st.header("🗺️ Gestione Spaziale Sensori (GIS & Planimetrie)")
     
-    tab1, tab2 = st.tabs(["🌍 Mappa Geografica (GIS)", "🖼️ Mappa su Immagine (CAD)"])
+    tipo_mappa = st.radio("Seleziona Tipo Visualizzazione", ["Mappa Geografica (OSM)", "Planimetria Tecnica (CAD/Immagine)"])
 
-    # --- TAB 1: MAPPA GEOGRAFICA ---
-    with tab1:
-        st.subheader("Visualizzazione Territoriale")
+    if tipo_mappa == "Planimetria Tecnica (CAD/Immagine)":
+        st.subheader("📍 Posizionamento su Immagine")
         
-        col1, col2, col3 = st.columns([2, 2, 1])
+        col1, col2 = st.columns([1, 3])
+        
         with col1:
-            city_search = st.text_input("Vai a città/indirizzo (es: Ancona)", "")
+            img_file = st.file_uploader("1. Carica Planimetria (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
+            excel_coords = st.file_uploader("2. Carica Coordinate Sensori (Excel)", type=['xlsx'])
+            st.info("L'Excel deve avere le colonne: 'Nome', 'X', 'Y', 'Colore'")
+            
+            # Form per inserimento manuale/modifica veloce
+            with st.expander("Aggiungi/Modifica Sensore"):
+                new_name = st.text_input("Nome Sensore")
+                new_x = st.number_input("Coordinata X", value=0.0)
+                new_y = st.number_input("Coordinata Y", value=0.0)
+                new_color = st.color_picker("Colore Marker", "#FF0000")
+
         with col2:
-            coords_input = st.text_input("Oppure inserisci Coordinate (Lat, Lon)", "")
-        
-        # Logica di posizionamento iniziale
-        lat_init, lon_init = 43.6158, 13.5189 # Default Ancona
-        
-        if city_search:
-            geolocator = Nominatim(user_agent="dimos_app")
-            location = geolocator.geocode(city_search)
-            if location:
-                lat_init, lon_init = location.latitude, location.longitude
-        elif coords_input:
-            try:
-                lat_init = float(coords_input.split(",")[0])
-                lon_init = float(coords_input.split(",")[1])
-            except:
-                st.error("Formato coordinate errato. Usa: Lat, Lon")
+            if img_file:
+                img = Image.open(img_file)
+                w, h = img.size
+                
+                # Creiamo il contenitore per i sensori
+                fig = go.Figure()
 
-        # Caricamento Excel per Marker
-        st.write("---")
-        up_map = st.file_uploader("Carica Excel Sensori (Colonne: Nome, Lat, Lon, Colore)", type=['xlsx'])
-        
-        m = folium.Map(location=[lat_init, lon_init], zoom_start=13, control_scale=True)
-        
-        # Strumento per aggiungere/disegnare/spostare manualmente
-        draw = Draw(
-            export=True,
-            filename='marker_dimos.json',
-            position='topleft',
-            draw_options={'polyline': False, 'rectangle': False, 'circle': False, 'polygon': False, 'circlemarker': False},
-            edit_options={'edit': True}
-        )
-        draw.add_to(m)
+                # Carichiamo i dati dall'Excel se presente
+                df_points = pd.DataFrame(columns=['Nome', 'X', 'Y', 'Colore'])
+                if excel_coords:
+                    df_points = pd.read_excel(excel_coords)
+                
+                # Se l'utente ha compilato il form manuale, aggiungiamolo temporaneamente
+                if new_name:
+                    new_row = pd.DataFrame([{'Nome': new_name, 'X': new_x, 'Y': new_y, 'Colore': new_color}])
+                    df_points = pd.concat([df_points, new_row], ignore_index=True)
 
-        # Se l'utente ha caricato un Excel, piazziamo i marker
-        if up_map:
-            df_map = pd.read_excel(up_map)
-            for _, row in df_map.iterrows():
-                folium.Marker(
-                    location=[row['Lat'], row['Lon']],
-                    popup=row['Nome'],
-                    tooltip=row['Nome'],
-                    icon=folium.Icon(color=row.get('Colore', 'blue'), icon='info-sign')
-                ).add_to(m)
-
-        st_folium(m, width=1000, height=600)
-
-    # --- TAB 2: MAPPA SU IMMAGINE (CAD) ---
-    with tab2:
-        st.subheader("Posizionamento Sensori su Planimetria/CAD")
-        
-        img_file = st.file_uploader("Carica Immagine Planimetria (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
-        excel_pts = st.file_uploader("Carica Excel punti (Nome, X, Y)", type=['xlsx'], key="ex_cad")
-
-        if img_file:
-            from PIL import Image
-            img = Image.open(img_file)
-            img_width, img_height = img.size
-
-            # Creazione grafico Plotly con immagine di sfondo
-            fig = go.Figure()
-
-            # Aggiungi immagine
-            fig.add_layout_image(
-                dict(
-                    source=img,
-                    xref="x", yref="y",
-                    x=0, y=img_height,
-                    sizex=img_width, sizey=img_height,
-                    sizing="stretch",
-                    opacity=1,
-                    layer="below"
+                # Sfondo: l'immagine CAD
+                fig.add_layout_image(
+                    dict(
+                        source=img,
+                        xref="x", yref="y",
+                        x=0, y=h,
+                        sizex=w, sizey=h,
+                        sizing="stretch",
+                        layer="below"
+                    )
                 )
-            )
 
-            # Configurazione Assi (nascosti)
-            fig.update_xaxes(showgrid=False, range=(0, img_width))
-            fig.update_yaxes(showgrid=False, range=(0, img_height), scaleanchor="x")
+                # Aggiungiamo i Marker (i sensori)
+                if not df_points.empty:
+                    fig.add_trace(go.Scatter(
+                        x=df_points['X'],
+                        y=df_points['Y'],
+                        mode='markers+text',
+                        marker=dict(size=14, color=df_points['Colore'] if 'Colore' in df_points else 'red', symbol='pentagon'),
+                        text=df_points['Nome'],
+                        textposition="top center",
+                        hovertemplate="<b>%{text}</b><br>X: %{x}<br>Y: %{y}<extra></extra>"
+                    ))
 
-            # Se ci sono dati da Excel, aggiungi i punti
-            if excel_pts:
-                df_p = pd.read_excel(excel_pts)
-                fig.add_trace(go.Scatter(
-                    x=df_p['X'], y=df_p['Y'],
-                    mode='markers+text',
-                    marker=dict(size=12, color='red', symbol='cross'),
-                    text=df_p['Nome'],
-                    textposition="top center",
-                    name="Sensori"
-                ))
+                # Impostazioni assi per mantenere le proporzioni dell'immagine
+                fig.update_xaxes(showgrid=False, zeroline=False, range=[0, w])
+                fig.update_yaxes(showgrid=False, zeroline=False, range=[0, h], scaleanchor="x")
+                
+                fig.update_layout(
+                    width=900, height=700,
+                    margin=dict(l=0, r=0, t=0, b=0),
+                    dragmode='pan', # Permette di spostarsi nell'immagine
+                )
 
-            # Interattività: l'utente può aggiungere punti cliccando (nello stato della sessione)
-            st.write("Puoi zoomare e spostare i sensori usando la barra degli strumenti di Plotly.")
-            fig.update_layout(
-                width=1000, height=800,
-                margin=dict(l=0, r=0, t=0, b=0),
-                dragmode='drawpoint' # Permette di disegnare punti
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.info("💡 Consiglio: Per spostare i sensori in tempo reale su un'immagine in modo 'drag & drop' avanzato, si consiglia di salvare le nuove coordinate X/Y nell'Excel dopo averle identificate sul grafico.")
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption("Usa la barra degli strumenti in alto a destra per zoomare o misurare le distanze.")
 
-# Per eseguire questa parte è necessario installare:
-# pip install streamlit-folium folium geopy pillow
+    else:
+        st.subheader("🌍 Mappa Geografica Interattiva")
+        st.write("Qui integriamo la ricerca per città (Ancona) e i marker su coordinate reali.")
+        # (Qui inseriremo il codice Folium con ricerca Nominatim)
+
+# Chiamata alla funzione
+# modulo_mappe_avanzato()
