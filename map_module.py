@@ -19,108 +19,89 @@ def save_mac(data):
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-def get_coords_from_city(city_name):
-    try:
-        url = f"https://nominatim.openstreetmap.org/search?q={city_name}&format=json&limit=1"
-        headers = {'User-Agent': 'DIMOS_MAC_APP'}
-        response = requests.get(url, headers=headers).json()
-        if response:
-            return float(response[0]['lat']), float(response[0]['lon'])
-    except: return None
-    return None
-
 def run_map_manager():
-    st.header("🌍 Modulo MAC - Integrazione Anagrafica Excel")
+    st.header("🌍 Modulo MAC - Integrazione Totale")
 
-    # 1. RECUPERO DATI DALLO STATO (Condiviso col Plotter)
-    # Se l'utente ha caricato il file nel plotter, usiamo quello, altrimenti chiediamo il caricamento
-    punti_salvati = load_mac()
-    anagrafica_excel = {}
-    
-    with st.sidebar:
-        st.subheader("📂 Sorgente Dati")
-        file_input = st.file_uploader("Carica Excel Monitoraggio (Foglio NAME)", type=['xlsx', 'xlsm'], key="mac_upload")
-        
+    # 1. RECUPERO ANAGRAFICA DALLA SESSIONE (Senza reset tra moduli)
+    # Se il plotter ha già caricato i dati, li usiamo. Altrimenti carichiamo qui.
+    if 'anagrafica' not in st.session_state:
+        st.info("💡 Carica il file Excel qui o nel modulo Plotter per iniziare.")
+        file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'])
         if file_input:
             xls = pd.ExcelFile(file_input)
             if "NAME" in xls.sheet_names:
                 df_name = pd.read_excel(xls, sheet_name="NAME", header=None).fillna("")
-                
-                # Leggiamo l'anagrafica includendo Righe 4 (Lat) e 5 (Lon)
-                # Nota: df_name.iloc[3] è la riga 4, df_name.iloc[4] è la riga 5
-                for c_idx in range(1, df_name.shape[1]):
-                    dl = str(df_name.iloc[0, c_idx]).strip()
-                    sens = str(df_name.iloc[1, c_idx]).strip()
+                ana = {}
+                # Estrazione come nel plotter + Righe 4 e 5 per coordinate
+                for c in range(1, df_name.shape[1]):
+                    dl = str(df_name.iloc[0, c]).strip()
+                    sens = str(df_name.iloc[1, c]).strip()
                     try:
-                        lat_val = float(df_name.iloc[3, c_idx]) if df_name.iloc[3, c_idx] != "" else None
-                        lon_val = float(df_name.iloc[4, c_idx]) if df_name.iloc[4, c_idx] != "" else None
-                    except:
-                        lat_val, lon_val = None, None
+                        # Riga 4 (index 3) e Riga 5 (index 4)
+                        lat_val = float(df_name.iloc[3, c]) if df_name.iloc[3, c] != "" else None
+                        lon_val = float(df_name.iloc[4, c]) if df_name.iloc[4, c] != "" else None
+                    except: lat_val, lon_val = None, None
                     
-                    if dl not in anagrafica_excel: anagrafica_excel[dl] = {}
-                    anagrafica_excel[dl][sens] = {"lat": lat_val, "lon": lon_val}
-                st.success("Anagrafica caricata con successo")
-
-    # 2. LOGICA DI POSIZIONAMENTO
-    if not anagrafica_excel:
-        st.info("👋 Benvenuto. Carica il file Excel nella sidebar per vedere i sensori o cercarli.")
+                    if dl not in ana: ana[dl] = {}
+                    ana[dl][sens] = {"lat": lat_val, "lon": lon_val}
+                st.session_state['anagrafica'] = ana
+                st.rerun()
         return
 
-    # Inizializzazione mappa su Ancona o sul primo sensore con coordinate
-    if 'center' not in st.session_state:
-        st.session_state.center = [43.6158, 13.5189]
+    # Se arriviamo qui, l'anagrafica esiste nello stato della sessione
+    ana = st.session_state['anagrafica']
+    punti_salvati = load_mac()
 
+    # 2. SIDEBAR DI SELEZIONE (Stile Plotter)
     with st.sidebar:
-        st.divider()
-        st.subheader("🔍 Navigazione")
-        city = st.text_input("Cerca Località")
-        if st.button("Vai"):
-            c = get_coords_from_city(city)
-            if c: st.session_state.center = c; st.rerun()
-
-        st.divider()
-        st.subheader("📍 Selezione Sensore")
-        sel_dl = st.selectbox("Seleziona Datalogger", sorted(anagrafica_excel.keys()))
-        sens_list = sorted(anagrafica_excel[sel_dl].keys())
-        sel_sens = st.selectbox("Seleziona Sensore", sens_list)
+        st.subheader("🛰️ Selezione Sensore")
+        sel_dl = st.selectbox("Datalogger", sorted(ana.keys()))
+        sel_sens = st.selectbox("Sensore", sorted(ana[sel_dl].keys()))
         
-        info_sens = anagrafica_excel[sel_dl][sel_sens]
+        info = ana[sel_dl][sel_sens]
         
-        if info_sens['lat'] and info_sens['lon']:
-            st.warning(f"Coordinata Excel trovata: {info_sens['lat']}, {info_sens['lon']}")
-            if st.button("Usa coordinate Excel"):
-                # Aggiungiamo ai punti salvati se non c'è già
-                if not any(p['nome'] == sel_sens for p in punti_salvati):
-                    punti_salvati.append({"nome": sel_sens, "lat": info_sens['lat'], "lon": info_sens['lon']})
-                    save_mac(punti_salvati)
-                    st.rerun()
-        else:
-            st.info("Coordinate mancanti nell'Excel. Clicca sulla mappa per piazzarlo.")
+        # Se l'Excel ha le coordinate, diamo la priorità
+        if info['lat'] and info['lon']:
+            st.success(f"Coordinate Excel: {info['lat']}, {info['lon']}")
+            if st.button("📍 Importa da Excel"):
+                # Aggiorna o aggiungi
+                punti_salvati = [p for p in punti_salvati if p['nome'] != sel_sens]
+                punti_salvati.append({"nome": sel_sens, "lat": info['lat'], "lon": info['lon']})
+                save_mac(punti_salvati)
+                st.rerun()
+        
+        st.divider()
+        if st.button("🗑️ Svuota Mappa"):
+            save_mac([])
+            st.rerun()
 
-    # 3. CREAZIONE MAPPA
-    m = folium.Map(location=st.session_state.center, zoom_start=15)
+    # 3. GESTIONE MAPPA
+    # Centriamo sulla media dei punti o su Ancona
+    center = [43.6158, 13.5189]
+    if punti_salvati:
+        center = [punti_salvati[-1]['lat'], punti_salvati[-1]['lon']]
+
+    m = folium.Map(location=center, zoom_start=15)
     
     for p in punti_salvati:
         folium.Marker([p['lat'], p['lon']], popup=p['nome'], tooltip=p['nome'],
                       icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
 
-    st.write(f"👉 **Azione:** Clicca per posizionare il sensore selezionato: **{sel_sens}**")
-    output = st_folium(m, width=1000, height=600, key="mac_map_integrated")
+    st.write(f"👉 Clicca sulla mappa per posizionare manualmente: **{sel_sens}**")
+    output = st_folium(m, width=1100, height=600, key="mac_integrated_map")
 
     # 4. SALVATAGGIO AL CLICK
     if output.get("last_clicked"):
         lat_c = output["last_clicked"]["lat"]
         lon_c = output["last_clicked"]["lng"]
         
-        # Sovrascriviamo o aggiungiamo la posizione per il sensore selezionato
-        # Rimuoviamo vecchia posizione se esiste
-        punti_salvati = [p for p in punti_salvati if p['nome'] != sel_sens]
-        punti_salvati.append({"nome": sel_sens, "lat": lat_c, "lon": lon_c})
-        save_mac(punti_salvati)
-        st.rerun()
+        # Verifichiamo se è un nuovo click (evita loop)
+        if not punti_salvati or (punti_salvati[-1]['lat'] != lat_c):
+            punti_salvati = [p for p in punti_salvati if p['nome'] != sel_sens]
+            punti_salvati.append({"nome": sel_sens, "lat": lat_c, "lon": lon_c})
+            save_mac(punti_salvati)
+            st.rerun()
 
     if punti_salvati:
-        with st.expander("📄 Riepilogo Posizioni"):
-            st.dataframe(pd.DataFrame(punti_salvati), use_container_width=True)
-            if st.button("🗑️ Reset Totale"):
-                save_mac([]); st.rerun()
+        with st.expander("📄 DataBase Coordinate"):
+            st.table(pd.DataFrame(punti_salvati))
