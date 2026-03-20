@@ -21,131 +21,137 @@ def run_plotter():
     with col_l:
         if os.path.exists("logo_dimos.jpg"): st.image("logo_dimos.jpg", width=300)
     
-    st.header("📈 Plotter DIMOS - Gestione Multisensore Completa")
+    st.header("📈 Plotter Professionale DIMOS - Selezione Granulare")
 
     file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="p_up")
     if not file_input: return
 
     xls = pd.ExcelFile(file_input)
-    df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
     
+    # --- 1. MAPPATURA SECONDO LE TUE RIGHE ---
+    anagrafica = {} # { Datalogger: { Sensore: { "Etichetta": "Nome_Colonna_Reale" } } }
+    
+    if "NAME" in xls.sheet_names:
+        df_name = pd.read_excel(xls, sheet_name="NAME", header=None)
+        # Riga 0 (A1, B1...): Datalogger
+        # Riga 1 (A2, B2...): Sensore
+        # Riga 2 (A3, B3...): Nome Web Completo (es: CO_9277 CL_01_X [°])
+        
+        for c_idx in range(1, df_name.shape[1]):
+            dl = str(df_name.iloc[0, c_idx]).strip()
+            sens = str(df_name.iloc[1, c_idx]).strip()
+            full_web_name = str(df_name.iloc[2, c_idx]).strip()
+            
+            if dl == "nan" or full_web_name == "nan": continue
+
+            if dl not in anagrafica: anagrafica[dl] = {}
+            if sens not in anagrafica[dl]: anagrafica[dl][sens] = {}
+            
+            # Estraiamo la grandezza (quello che c'è dopo il nome web o l'unita di misura)
+            # Per SD_301 avremo diverse voci qui
+            grandezza = full_web_name
+            if "_" in full_web_name:
+                parts = full_web_name.split("_")
+                grandezza = parts[-1] # Prende l'ultima parte es. "X [°]" o "LM [m]"
+            
+            anagrafica[dl][sens][grandezza] = full_web_name
+    else:
+        st.warning("Layer 'NAME' non trovato. Caricamento nomi web standard...")
+        # Gestione fallback se NAME manca (come da tua richiesta)
+
+    # --- 2. CARICAMENTO DATI ---
     sheets_dati = [s for s in xls.sheet_names if s not in ["NAME", "ARRAY", "Info"]]
-    sel_sheet = st.selectbox("Seleziona Foglio Dati", sheets_dati)
+    sel_sheet = st.selectbox("Seleziona Layer Dati", sheets_dati)
     df = pd.read_excel(xls, sheet_name=sel_sheet)
     df.columns = [str(c).strip() for c in df.columns]
     df['Data e Ora'] = pd.to_datetime(df['Data e Ora'])
 
-    # --- 1. MAPPATURA ESPLOSA (MULTISENSORE) ---
-    # Questa sezione scansiona TUTTE le colonne per ogni ID Web trovato
-    anagrafica = {}
-    
-    for c_idx in range(1, df_name.shape[1]):
-        dl_label = str(df_name.iloc[0, c_idx]).strip()
-        sens_label = str(df_name.iloc[1, c_idx]).strip()
-        web_id = str(df_name.iloc[2, c_idx]).strip()
-        
-        if dl_label not in anagrafica: anagrafica[dl_label] = {}
-        if sens_label not in anagrafica[dl_label]: anagrafica[dl_label][sens_label] = {}
-        
-        # Cerchiamo tutte le colonne che iniziano con il web_id (es. CO_9277 CL_01)
-        for col_data in df.columns:
-            if col_data.startswith(web_id):
-                # Estraiamo la grandezza specifica (es. X [°], LM [m])
-                # Puliamo l'etichetta rimuovendo il prefisso web
-                grandezza = col_data.replace(web_id, "").strip().lstrip('_')
-                if not grandezza and "[" in col_data:
-                    grandezza = re.search(r'\[.*?\]', col_data).group(0)
-                
-                # Salviamo la colonna reale nel dizionario delle grandezze del sensore
-                anagrafica[dl_label][sens_label][grandezza] = col_data
-
-    # --- 2. SIDEBAR FILTRI (GAUSS E ZERI) ---
-    st.sidebar.header("⚙️ Parametri Analisi")
+    # --- 3. FILTRI SIDEBAR ---
+    st.sidebar.header("⚙️ Pulizia Dati")
     clean_zeros = st.sidebar.checkbox("Rimuovi Zeri", value=True)
-    use_gauss = st.sidebar.checkbox("Filtro Gauss (Sigma)", value=True)
-    sigma_val = st.sidebar.slider("Livello Sigma", 1.0, 5.0, 2.0, 0.1)
-    grado_poly = st.sidebar.selectbox("Trend Polinomiale", [0, 2, 3, 4], format_func=lambda x: "OFF" if x==0 else f"Grado {x}")
+    use_gauss = st.sidebar.checkbox("Filtro Gaussiano", value=True)
+    sigma_val = st.sidebar.slider("Sigma", 1.0, 5.0, 2.0, 0.1)
 
-    # --- 3. SELEZIONE MULTIPLA ---
+    # --- 4. SELEZIONE GRANULARE (3 LIVELLI) ---
     st.divider()
     t_min, t_max = df['Data e Ora'].min().to_pydatetime(), df['Data e Ora'].max().to_pydatetime()
-    sel_range = st.slider("Seleziona Periodo", t_min, t_max, (t_min, t_max))
+    sel_range = st.slider("Intervallo Temporale", t_min, t_max, (t_min, t_max))
     df_f = df[(df['Data e Ora'] >= sel_range[0]) & (df['Data e Ora'] <= sel_range[1])].copy()
 
-    c1, c2, c3 = st.columns(3)
-    with c1: 
-        s_dls = st.multiselect("Datalogger", sorted(anagrafica.keys()))
+    col1, col2, col3 = st.columns(3)
     
-    opts_s = [f"{d} | {s}" for d in s_dls for s in anagrafica[d].keys()]
-    with c2: 
-        s_sens = st.multiselect("Sensori", opts_s)
+    with col1:
+        selected_dls = st.multiselect("1. Seleziona Datalogger", sorted(anagrafica.keys()))
     
-    # RACCOLTA GRANDEZZE: Qui ora appariranno TUTTE le 8 opzioni per SD_301
-    opts_g = set()
-    for it in s_sens:
-        d, s = it.split(" | ")
-        opts_g.update(anagrafica[d][s].keys())
+    with col2:
+        # Mostra i sensori univoci per i DL selezionati
+        sens_options = []
+        for dl in selected_dls:
+            for s in anagrafica[dl].keys():
+                if f"{dl} | {s}" not in sens_options:
+                    sens_options.append(f"{dl} | {s}")
+        selected_sens_pairs = st.multiselect("2. Seleziona Sensore", sens_options)
     
-    with c3: 
-        s_grands = st.multiselect("Grandezze Fisiche", sorted(list(opts_g)))
+    with col3:
+        # Qui esplodono le grandezze fisiche (X, Y, Z, T1...)
+        grand_options = set()
+        for pair in selected_sens_pairs:
+            dl_p, sens_p = pair.split(" | ")
+            grand_options.update(anagrafica[dl_p][sens_p].keys())
+        selected_grands = st.multiselect("3. Seleziona Grandezze Fisiche", sorted(list(grand_options)))
 
-    # --- 4. MOTORE DI CALCOLO ---
-    def get_clean_series(col):
+    # --- 5. FUNZIONE DI ELABORAZIONE ---
+    def process(col):
         y = df_f[col].copy()
         if clean_zeros: y = y.replace(0, np.nan)
         if use_gauss and y.notna().sum() > 5:
-            m, sd = y.mean(), y.std()
-            y = y.mask(abs(y - m) > (sigma_val * sd), np.nan)
+            m, s = y.mean(), y.std()
+            y = y.mask(abs(y - m) > (sigma_val * s), np.nan)
         return y.interpolate(limit_direction='both')
 
-    # --- 5. GRAFICO ---
+    # --- 6. GRAFICO ---
     fig = go.Figure()
-    if s_sens and s_grands:
-        for it in s_sens:
-            d, s = it.split(" | ")
-            for g in s_grands:
-                if g in anagrafica[d][s]:
-                    c_real = anagrafica[d][s][g]
-                    y_p = get_clean_series(c_real)
-                    fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y_p, name=f"{s} - {g}"))
-                    
-                    if grado_poly > 0:
-                        x_n = np.arange(len(y_p))
-                        v = y_p.notna()
-                        if v.any():
-                            p = np.poly1d(np.polyfit(x_n[v], y_p[v], grado_poly))
-                            fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=p(x_n), 
-                                                   name=f"Trend {s} {g}", line=dict(dash='dot')))
+    if selected_sens_pairs and selected_grands:
+        for pair in selected_sens_pairs:
+            dl_p, sens_p = pair.split(" | ")
+            for g in selected_grands:
+                if g in anagrafica[dl_p][sens_p]:
+                    full_col = anagrafica[dl_p][sens_p][g]
+                    if full_col in df.columns:
+                        y_vals = process(full_col)
+                        fig.add_trace(go.Scatter(x=df_f['Data e Ora'], y=y_vals, name=f"{sens_p} - {g}"))
 
+        fig.update_layout(template="plotly_white", height=700, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 6. COMANDI DI PRODUZIONE STAMPE (REPLICANO LA VISUALIZZAZIONE) ---
+        # --- 7. STAMPE (PRODUZIONE SPECULARE) ---
         st.divider()
-        st.subheader("💾 Comandi di Stampa (Produzione Report)")
+        st.subheader("💾 Produzione File di Stampa")
         cw, ce = st.columns(2)
 
         with cw:
-            if st.button("📝 PRODUCI REPORT WORD"):
+            if st.button("📝 GENERA REPORT WORD"):
                 doc = Document()
-                doc.add_heading('REPORT MONITORAGGIO DIMOS', 0)
-                doc.add_paragraph(f"Visualizzazione speculare: Gauss {sigma_val}, Zeri {clean_zeros}")
-                # Il grafico nel Word è esattamente lo stesso visualizzato
+                doc.add_heading('REPORT MONITORAGGIO - DIMOS', 0)
+                doc.add_paragraph(f"Visualizzazione di: {', '.join(selected_grands)}")
+                # Inserisce lo STESSO grafico visto sopra
                 img_io = BytesIO(pio.to_image(fig, format="png", width=1000, height=500))
                 doc.add_picture(img_io, width=Inches(6.2))
                 
-                target_w = BytesIO(); doc.save(target_w)
-                st.download_button("📥 Scarica Report Word", target_w.getvalue(), "Report.docx")
+                buf_w = BytesIO(); doc.save(buf_w)
+                st.download_button("📥 Scarica Word", buf_w.getvalue(), "Report.docx")
 
         with ce:
-            if st.button("📊 PRODUCI EXCEL DATI"):
-                # Excel speculare con solo i dati e i filtri scelti a video
+            if st.button("📊 GENERA EXCEL STAMPA"):
+                # Excel con i dati filtrati e selezionati a video
                 df_out = pd.DataFrame({'Data Ora': df_f['Data e Ora']})
-                for it in s_sens:
-                    d, s = it.split(" | ")
-                    for g in s_grands:
-                        if g in anagrafica[d][s]:
-                            df_out[f"{s}_{g}"] = get_clean_series(anagrafica[d][s][g])
+                for pair in selected_sens_pairs:
+                    dl_p, sens_p = pair.split(" | ")
+                    for g in selected_grands:
+                        if g in anagrafica[dl_p][sens_p]:
+                            fc = anagrafica[dl_p][sens_p][g]
+                            df_out[f"{sens_p}_{g}"] = process(fc)
                 
-                target_e = BytesIO()
-                df_out.to_excel(target_e, index=False)
-                st.download_button("📥 Scarica Dati Excel", target_e.getvalue(), "Dati_Stampa.xlsx")
+                buf_e = BytesIO()
+                df_out.to_excel(buf_e, index=False)
+                st.download_button("📥 Scarica Excel", buf_e.getvalue(), "Dati_Stampa.xlsx")
