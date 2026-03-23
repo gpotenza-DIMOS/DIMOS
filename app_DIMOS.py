@@ -1,10 +1,11 @@
+# main_app.py
 import streamlit as st
 import os
 
-# Configurazione 
+# Configurazione pagina
 st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
 
-# CSS integrale (mantenuto il tuo stile originale)
+# CSS integrale
 st.markdown("""
     <style>
         [data-testid="stSidebarContent"] { background-color: #1a1c23 !important; padding-top: 0px !important; }
@@ -22,10 +23,12 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-if "auth" not in st.session_state: st.session_state["auth"] = False
+# --- Autenticazione ---
+if "auth" not in st.session_state:
+    st.session_state["auth"] = False
 
 if not st.session_state["auth"]:
-    _, col_login, _ = st.columns([1, 1, 1])
+    _, col_login, _ = st.columns([1,1,1])
     with col_login:
         st.markdown("<br><br>", unsafe_allow_html=True)
         if os.path.exists("logo_dimos.jpg"): st.image("logo_dimos.jpg")
@@ -36,17 +39,20 @@ if not st.session_state["auth"]:
                 if u == "asdf" and p == "asdf":
                     st.session_state["auth"] = True
                     st.rerun()
-                else: st.error("Credenziali Errate")
+                else:
+                    st.error("Credenziali Errate")
     st.stop()
 
-# SIDEBAR: Navigazione Completa
+# --- SIDEBAR ---
 with st.sidebar:
-    if os.path.exists("logo_microgeo.jpg"): st.image("logo_microgeo.jpg", use_container_width=True)
+    if os.path.exists("logo_microgeo.jpg"):
+        st.image("logo_microgeo.jpg", use_container_width=True)
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🏠 DASHBOARD"): st.session_state["page"] = "home"
     if st.button("📈 ANALISI GRAFICA"): st.session_state["page"] = "pl"
     if st.button("📍 MAPPE"): st.session_state["page"] = "map"
     if st.button("📏 ELETTROLIVELLE"): st.session_state["page"] = "el"
+    if st.button("🛰 TPS MONITORING"): st.session_state["page"] = "tps"
     st.markdown("<br><br>", unsafe_allow_html=True)
     if st.button("🚪 LOGOUT"):
         st.session_state["auth"] = False
@@ -54,15 +60,17 @@ with st.sidebar:
 
 pg = st.session_state.get("page", "home")
 
+# --- PAGINE ---
 if pg == "home":
     st.title("Piattaforma Integrata DIMOS")
     st.divider()
     col_img1, col_img2 = st.columns([1, 4])
     with col_img1:
-        if os.path.exists("logo_DIMOScircle.jpg"): st.image("logo_DIMOScircle.jpg", width=250)
+        if os.path.exists("logo_DIMOScircle.jpg"):
+            st.image("logo_DIMOScircle.jpg", width=250)
     with col_img2:
-        if os.path.exists("montita.jpg"): st.image("montita.jpg", width=400)
-    
+        if os.path.exists("montita.jpg"):
+            st.image("montita.jpg", width=400)
     st.markdown("<br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -81,9 +89,16 @@ if pg == "home":
 elif pg == "pl":
     import plotter_mod
     plotter_mod.run_plotter()
+
 elif pg == "map":
     import map_module
     map_module.run_map_manager()
+
 elif pg == "el":
     import elettrolivelle_mod
     elettrolivelle_mod.run_elettrolivelle()
+
+elif pg == "tps":
+    # --- TPS Monitoring ---
+    import TPS_mod
+    TPS_mod.run_tps_monitoring()
