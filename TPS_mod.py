@@ -30,7 +30,7 @@ class SokkiaIXController:
                 stopbits=serial.STOPBITS_ONE,
                 timeout=self.timeout
             )
-            self.ser.write(b"\r\n") # Wake up call
+            self.ser.write(b"\r\n")  # Wake up call
             st.success(f"✅ Connesso a {self.port} @ {self.baudrate} baud")
         except Exception as e:
             st.error(f"❌ Errore connessione: {e}")
@@ -51,7 +51,7 @@ class SokkiaIXController:
             return None
 
     def process_data(self, raw, h_instr=1.50, h_reflector=1.50):
-        """Algoritmo matematico per trasformare stringa grezza in coordinate"""
+        """Trasforma stringa grezza in coordinate locali"""
         if not raw or len(raw) < 15:
             return None
         matches = re.findall(r'[+-]?\d+', raw)
@@ -80,7 +80,7 @@ class SokkiaIXController:
         except Exception as e:
             return {"Errore": str(e), "Raw": raw}
 
-    # --- Comandi originali ---
+    # --- Comandi avanzati ---
     def change_face(self, position=1):
         self.face = position
         cmd = "P1" if position == 1 else "P2"
@@ -94,7 +94,7 @@ class SokkiaIXController:
     def power_off(self):
         return self._send_command("PW0")
 
-# --- INTERFACCIA STREAMLIT CON MONITORAGGIO ---
+# --- INTERFACCIA STREAMLIT ---
 def run_tps_monitoring(auto_refresh=False):
     st.set_page_config(page_title="Sokkia iX-1200 Controller", layout="wide")
     st.title("🛰️ TPS Monitoring - Sokkia iX-1200")
@@ -103,7 +103,13 @@ def run_tps_monitoring(auto_refresh=False):
     h_i = st.sidebar.number_input("Altezza Strumento (m)", value=1.500, format="%.3f")
     h_p = st.sidebar.number_input("Altezza Prisma (m)", value=1.500, format="%.3f")
 
+    # --- Porta seriale con possibilità di forzare manualmente ---
     ports = [p.device for p in serial.tools.list_ports.comports()]
+    forced_ports = st.text_input("Forza Porta COM (opzionale, es. COM11):")
+    if forced_ports:
+        if forced_ports not in ports:
+            ports.append(forced_ports)
+
     selected_port = st.selectbox("Seleziona porta seriale:", ports if ports else ["Nessuna porta trovata"])
     baudrate = st.selectbox("Seleziona Baud Rate:", [9600, 19200, 38400, 57600, 115200], index=2)
     timeout = st.number_input("Timeout (secondi):", min_value=1, max_value=10, value=2)
@@ -157,7 +163,7 @@ def run_tps_monitoring(auto_refresh=False):
                 st.session_state.stazione.power_off()
                 st.error("Comando di spegnimento inviato.")
 
-        # --- Monitoraggio automatico ---
+        # --- Stato dinamico strumento ---
         st.markdown("### Stato Strumento")
         st.write(f"Faccia attuale: {st.session_state.stazione.face}")
         st.write(f"Laser acceso: {st.session_state.stazione.laser_on}")
