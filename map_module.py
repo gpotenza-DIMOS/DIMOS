@@ -6,6 +6,8 @@ import folium
 from folium.features import DivIcon
 from streamlit_folium import st_folium
 import re
+from PIL import Image
+import numpy as np
 
 CONFIG_FILE = "mac_positions.json"
 
@@ -91,7 +93,7 @@ def run_map_manager():
         c1, c2 = st.columns([2,1])
 
         with c1:
-            file_input = st.file_uploader("Carica file Excel", type=['xlsx', 'xlsm'])
+            file_input = st.file_uploader("Carica file Excel", type=['xlsx','xlsm'])
             if file_input:
                 ana = parse_excel_advanced(file_input)
                 st.session_state.anagrafica = ana
@@ -134,8 +136,9 @@ def run_map_manager():
             st.markdown("### Overlay immagine")
             img_file = st.file_uploader("Carica immagine georeferenziata", type=['png','jpg','jpeg'])
             if img_file:
-                st.session_state.overlay_image = img_file.read()
-                st.session_state.overlay_bounds = [[45.4635, 9.1895], [45.4649, 9.1905]]  # default bounds
+                img = Image.open(img_file)
+                st.session_state.overlay_image = np.array(img)
+                st.session_state.overlay_bounds = [[45.4635, 9.1895], [45.4649, 9.1905]]
                 st.session_state.overlay_opacity = st.slider("Trasparenza", 0.0, 1.0, 0.5)
                 st.success("Overlay caricato!")
 
@@ -168,7 +171,7 @@ def run_map_manager():
     m = folium.Map(location=center, zoom_start=17)
 
     # Overlay immagine
-    if st.session_state.overlay_image and st.session_state.overlay_bounds:
+    if st.session_state.overlay_image is not None and st.session_state.overlay_bounds:
         folium.raster_layers.ImageOverlay(
             image=st.session_state.overlay_image,
             bounds=st.session_state.overlay_bounds,
