@@ -20,79 +20,45 @@ class SokkiaDirect:
             )
             return True
         except Exception as e:
-            st.error(f"Errore di connessione: {e}")
+            st.error(f"Errore connessione: {e}")
             return False
 
     def send_command(self, cmd):
-        """Invia il comando con terminazione CR-LF come richiesto dal manuale"""
+        """Invia comando con terminazione CR-LF [cite: 11, 20]"""
         if self.ser and self.ser.is_open:
-            full_command = f"{cmd}\r\n".encode('ascii') # 
+            full_command = f"{cmd}\r\n".encode('ascii') 
             self.ser.write(full_command)
             time.sleep(0.5)
-            # Legge la risposta fino al CR-LF
-            response = self.ser.readline().decode('ascii', errors='ignore').strip()
-            return response
-        return "Errore: Porta seriale non aperta"
+            return self.ser.readline().decode('ascii', errors='ignore').strip()
+        return "Errore: Porta chiusa"
 
-# --- INTERFACCIA STREAMLIT ---
-st.title("🛰️ Sokkia iX - Direct Controller")
+def run_tps_monitoring():
+    """Questa è la funzione che cerca il tuo file principale"""
+    st.subheader("🛰️ Controllo Sokkia iX")
 
-col1, col2 = st.columns(2)
-with col1:
-    port = st.text_input("Porta COM (es. COM11)", value="COM11")
-with col2:
-    baud = st.selectbox("Baud Rate", [1200, 2400, 4800, 9600, 19200, 38400], index=3)
+    col1, col2 = st.columns(2)
+    with col1:
+        port = st.text_input("Porta COM", value="COM11")
+    with col2:
+        baud = st.selectbox("Baud Rate", [4800, 9600, 19200], index=1)
 
-if st.button("🔌 Connetti Strumento"):
-    st.session_state.tps = SokkiaDirect(port, baud)
-    if st.session_state.tps.connect():
-        st.success("Connesso con successo!")
+    if st.button("🔌 Connetti"):
+        st.session_state.tps = SokkiaDirect(port, baud)
+        if st.session_state.tps.connect():
+            st.success("Strumento connesso!")
 
-if "tps" in st.session_state:
-    st.markdown("---")
-    
-    st.subheader("Comandi di Misura")
-    c1, c2, c3 = st.columns(3)
-    
-    with c1:
-        if st.button("📏 Richiedi Angoli (00H)"):
-            # 00H: Comando standard per dati angolari [cite: 10, 12]
-            res = st.session_state.tps.send_command("00H")
-            st.info(f"Risposta: {res}")
-            
-    with c2:
-        if st.button("📐 Misura Distanza (11H)"):
-            # 11H: Richiesta distanza e angoli [cite: 13]
-            res = st.session_state.tps.send_command("11H")
-            st.info(f"Risposta: {res}")
-
-    with c3:
-        if st.button("🛑 Stop Misura (12H)"):
-            # 12H: Stop misura [cite: 13]
-            st.session_state.tps.send_command("12H")
-
-    st.markdown("---")
-    st.subheader("Impostazioni Strumento")
-    c4, c5, c6 = st.columns(3)
-
-    with c4:
-        if st.button("🔄 Azzera Angolo Oriz. (Xh)"):
-            # Xh: Imposta angolo orizzontale a 0 [cite: 163]
-            res = st.session_state.tps.send_command("Xh")
-            st.write(f"Esito: {res}")
-
-    with c5:
-        if st.button("💡 Luci ON (Xr)"):
-            # Xr: Accende illuminazione display [cite: 163]
-            st.session_state.tps.send_command("Xr")
-            
-    with c6:
-        if st.button("🌑 Luci OFF (Xs)"):
-            # Xs: Spegne illuminazione display [cite: 163]
-            st.session_state.tps.send_command("Xs")
-
-    st.markdown("---")
-    custom_cmd = st.text_input("Invia comando manuale (es. A per info strumento)")
-    if st.button("Invia Manuale"):
-        res = st.session_state.tps.send_command(custom_cmd)
-        st.code(res)
+    if "tps" in st.session_state:
+        st.divider()
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            if st.button("📏 Misura Distanza (11H)"):
+                # Comando 11H per distanza e angoli [cite: 13]
+                res = st.session_state.tps.send_command("11H")
+                st.info(f"Dati: {res}")
+        
+        with c2:
+            if st.button("🔄 Azzera Angolo (Xh)"):
+                # Comando Xh per azzerare H [cite: 163]
+                st.session_state.tps.send_command("Xh")
+                st.toast("Angolo azzerato!")
