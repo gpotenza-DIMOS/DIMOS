@@ -154,11 +154,17 @@ def run_map_manager():
 
     m = folium.Map(location=center, zoom_start=15)
 
-    # Overlay immagine/SVG
+    # ---------- Overlay immagine generica centrata sulla zoomata corrente ----------
     if img_file:
         img = Image.open(img_file)
         data_url = img_to_data_url(img)
-        bounds = [[45.4635, 9.1895], [45.4650, 9.1910]]
+        # Bounding box intorno al centro mappa
+        lat_center, lon_center = center
+        delta = 0.0007  # dimensione overlay
+        bounds = [
+            [lat_center - delta, lon_center - delta],
+            [lat_center + delta, lon_center + delta]
+        ]
         overlay_js = f"""
         <script src="https://unpkg.com/leaflet-distortableimage"></script>
         <script>
@@ -176,10 +182,16 @@ def run_map_manager():
         """
         m.get_root().html.add_child(folium.Element(overlay_js))
 
+    # ---------- Overlay SVG centrato sulla zoomata ----------
     if svg_file:
         svg_data = svg_file.read().decode()
         data_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
-        bounds = [[45.4635, 9.1895], [45.4650, 9.1910]]
+        lat_center, lon_center = center
+        delta = 0.0007
+        bounds = [
+            [lat_center - delta, lon_center - delta],
+            [lat_center + delta, lon_center + delta]
+        ]
         overlay_js = f"""
         <script src="https://unpkg.com/leaflet-distortableimage"></script>
         <script>
@@ -197,7 +209,7 @@ def run_map_manager():
         """
         m.get_root().html.add_child(folium.Element(overlay_js))
 
-    # Marker dinamici
+    # ---------- Marker dinamici ----------
     for key, p in st.session_state.punti.items():
         d_p, s_p = p["dl"], p["sn"]
         if sel_dl and sel_dl != "Tutti" and d_p != sel_dl: continue
