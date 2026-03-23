@@ -7,6 +7,8 @@ from folium.features import DivIcon
 from streamlit_folium import st_folium
 import re
 from PIL import Image
+import base64
+import io
 
 CONFIG_FILE = "mac_positions.json"
 
@@ -67,12 +69,18 @@ def parse_excel_advanced(file):
             ana[dl][sn]["params"].append(param_full)
     return ana
 
+def img_to_data_url(img):
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode()
+    return f"data:image/png;base64,{encoded}"
+
 # ----------------- MAIN -----------------
 def run_map_manager():
     st.set_page_config(layout="wide", page_title="Monitoraggio MAC")
     st.title("🌍 Monitoraggio Sensori Georeferenziati con Overlay")
 
-    # ---------- SESSION_STATE ----------
+    # ---------- INIZIALIZZAZIONE SESSION_STATE ----------
     if 'punti' not in st.session_state or not isinstance(st.session_state.punti, dict):
         st.session_state.punti = load_mac()
     if 'anagrafica' not in st.session_state:
@@ -80,13 +88,12 @@ def run_map_manager():
     if 'overlays' not in st.session_state:
         st.session_state.overlays = []
 
-    # ---------- UPLOAD E INPUT ---------- 
-    with st.container():
-        st.subheader("📂 Carica Excel / Inserimento manuale / Marker / Overlay")
-        c1, c2 = st.columns([2,1])
+    # ---------- BARRA SUPERIORE COMPATTA ----------
+    with st.expander("📂 Carica / Inserimento manuale / Overlay", expanded=True):
+        c1, c2, c3 = st.columns([2, 1, 1])
 
         with c1:
-            file_input = st.file_uploader("Carica file Excel", type=['xlsx','xlsm'])
+            file_input = st.file_uploader("Carica Excel", type=['xlsx','xlsm'], key="excel")
             if file_input:
                 ana = parse_excel_advanced(file_input)
                 st.session_state.anagrafica = ana
@@ -101,12 +108,10 @@ def run_map_manager():
                 save_mac(st.session_state.punti)
                 st.success("Excel caricato!")
 
-            st.markdown("### Inserimento manuale")
-            m_dl = st.text_input("Datalogger")
-            m_sn = st.text_input("Sensore")
-            c_lat, c_lon = st.columns(2)
-            m_lat = c_lat.number_input("Lat", value=st.session_state.get("click_lat", 45.4642), format="%.6f")
-            m_lon = c_lon.number_input("Lon", value=st.session_state.get("click_lon", 9.1900), format="%.6f")
+            m_dl = st.text_input("Datalogger", key="manual_dl")
+            m_sn = st.text_input("Sensore", key="manual_sn")
+            m_lat = st.number_input("Lat", value=st.session_state.get("click_lat", 45.4642), format="%.6f", key="manual_lat")
+            m_lon = st.number_input("Lon", value=st.session_state.get("click_lon", 9.1900), format="%.6f", key="manual_lon")
             if st.button("➕ Aggiungi punto"):
                 if m_dl and m_sn:
                     key = f"{m_dl}|{m_sn}"
@@ -118,12 +123,13 @@ def run_map_manager():
                     st.experimental_rerun()
 
         with c2:
-            st.markdown("### Marker predefiniti")
-            m_color = st.color_picker("Colore predefinito", "#0066ff")
-            m_shape = st.selectbox("Forma predefinita", ["circle","square","triangle"])
-            st.markdown("### Overlay immagine PNG/JPG")
-            img_file = st.file_uploader("Carica immagine PNG/JPG", type=['png','jpg','jpeg'])
-            opacity = st.slider("Trasparenza overlay", 0.0, 1.0, 0.5)
+            m_color = st.color_picker("Colore predefinito", "#0066ff", key="color_picker")
+            m_shape = st.selectbox("Forma predefinita", ["circle","square","triangle"], key="shape_picker")
+
+        with c3:
+            img_file = st.file_uploader("Carica PNG/JPG", type=['png','jpg','jpeg'], key="img_overlay")
+            svg_file = st.file_uploader("Carica SVG", type=['svg'], key="svg_overlay")
+            opacity = st.slider("Trasparenza overlay", 0.0, 1.0, 0.5, key="overlay_opacity")
 
     # ---------- FILTRI ----------
     sel_dl, sel_sn, sel_params = None, None, []
@@ -138,7 +144,7 @@ def run_map_manager():
             sel_params = c3f.multiselect("Visualizza Parametri", params_list, default=params_list[:1])
 
     # ---------- MAPPA ----------
-    center = [43.610601, 13.436571]
+    center = [45.4642, 9.1900]
     if st.session_state.punti:
         last = list(st.session_state.punti.values())[-1]
         center = [last["lat"], last["lon"]]
@@ -148,14 +154,29 @@ def run_map_manager():
     # ---------- Overlay PNG/JPG ----------
     if img_file:
         img = Image.open(img_file)
+        data_url = img_to_data_url(img)
         bounds = [[center[0]-0.001, center[1]-0.001], [center[0]+0.001, center[1]+0.001]]
         folium.raster_layers.ImageOverlay(
-            image=img,
+            image=data_url,
             bounds=bounds,
             opacity=opacity,
             interactive=True,
             cross_origin=False,
-            zindex=1,
+            zindex=1
+        ).add_to(m)
+
+    # ---------- Overlay SVG ----------
+    if svg_file:
+        svg_data = svg_file.read().decode()
+        data_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
+        bounds = [[center[0]-0.001, center[1]-0.001], [center[0]+0.001, center[1]+0.001]]
+        folium.raster_layers.ImageOverlay(
+            image=data_url,
+            bounds=bounds,
+            opacity=opacity,
+            interactive=True,
+            cross_origin=False,
+            zindex=1
         ).add_to(m)
 
     # ---------- Marker dinamici ----------
