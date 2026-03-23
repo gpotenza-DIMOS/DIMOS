@@ -1,4 +1,3 @@
-# TPS_mod.py
 import streamlit as st
 import serial
 import serial.tools.list_ports
@@ -7,7 +6,6 @@ import math
 import re
 
 class SokkiaIXController:
-    """Controller per Sokkia iX-1200 con parametri avanzati"""
     def __init__(self, port, baudrate=9600, parity=serial.PARITY_NONE, stopbits=1, bytesize=8, flow_control="None", timeout=2):
         self.port = port
         self.baudrate = baudrate
@@ -15,27 +13,17 @@ class SokkiaIXController:
         self.stopbits = stopbits
         self.bytesize = bytesize
         self.timeout = timeout
-
-        # Flow control
         self.xonxoff = True if flow_control == "Xon/Xoff" else False
         self.rtscts = True if flow_control == "RTS/CTS" else False
-
         self.ser = None
-        self.laser_on = False
-        self.face = 1
         self.connect()
 
     def connect(self):
-        # Verifica se la porta esiste
-        available_ports = [p.device for p in serial.tools.list_ports.comports()]
-        if self.port not in available_ports:
-            st.error(f"❌ Porta {self.port} non trovata! Porte disponibili: {available_ports}")
-            self.ser = None
-            return
-
         try:
             if self.ser and self.ser.is_open:
                 self.ser.close()
+            
+            # Connessione diretta senza filtri (risolve il problema COM11 non trovata)
             self.ser = serial.Serial(
                 port=self.port,
                 baudrate=self.baudrate,
@@ -46,137 +34,118 @@ class SokkiaIXController:
                 xonxoff=self.xonxoff,
                 rtscts=self.rtscts
             )
-            self.ser.write(b"\x06\r\n")  # Wakeup protocollo Sokkia
-            st.success(f"✅ Connesso a {self.port} @ {self.baudrate} baud")
+            
+            # Sequenza di inizializzazione standard Sokkia (ACK)
+            self.ser.write(b"\x06\r\n") 
+            time.sleep(0.1)
+            st.success(f"✅ Tentativo di connessione su {self.port} inviato.")
         except Exception as e:
-            st.error(f"❌ Errore connessione: {e}")
+            st.error(f"❌ Errore Hardware: {e}")
             self.ser = None
 
     def _send_command(self, command):
         if not self.ser or not self.ser.is_open:
-            st.warning("Strumento non connesso.")
-            return None
+            return "NON CONNESSO"
         try:
             self.ser.reset_input_buffer()
-            self.ser.write(f"00{command}\r\n".encode("ascii"))
-            time.sleep(0.2)
-            response = self.ser.readline().decode("ascii").strip()
-            return response
+            # Protocollo robusto: STX (0x02) + Comando + ETX (0x03)
+            # Molte iX richiedono i "00" davanti
+            full_command = f"\x0200{command}\x03\r\n".encode("ascii")
+            self.ser.write(full_command)
+            
+            time.sleep(0.5) # Aumentato per dare tempo ai motori della iX
+            response = self.ser.readline().decode("ascii", errors="ignore").strip()
+            
+            # Pulizia dai caratteri di controllo della risposta
+            clean_res = re.sub(r'[^\x20-\x7E]', '', response)
+            return clean_res
         except Exception as e:
-            st.error(f"Errore comunicazione: {e}")
-            return None
+            return f"ERRORE: {e}"
 
-    def process_data(self, raw, h_instr=1.50, h_reflector=1.50):
+    def measure_sequence(self, hi, hp):
+        """Algoritmo di misura forzata"""
+        # 1. Forza lo strumento a prendere una misura (distanza + angoli)
+        st.write("🛰️ Calibrazione distanza in corso...")
+        self._send_command("M") # Comando Measure
+        time.sleep(1.5) 
+        
+        # 2. Richiede i dati dell'ultima misura effettuata
+        raw = self._send_command("D")
+        return self.process_data(raw, hi, hp)
+
+    def process_data(self, raw, h_instr, h_reflector):
         if not raw or len(raw) < 5:
-            return None
+            return {"Errore": "Strumento non ha risposto o misura fallita", "Raw": raw}
+        
+        # L'algoritmo di parsing deve ignorare i prefissi '00' o 'D'
+        matches = re.findall(r'[+-]\d+', raw)
+        if len(matches) < 3:
+            return {"Errore": "Dati incompleti (forse manca il prisma?)", "Raw": raw}
+            
         try:
-            matches = re.findall(r'[+-]?\d+', raw)
-            if len(matches) < 3:
-                return {"Errore": "Formato stringa non riconosciuto", "Raw": raw}
             hz_deg = float(matches[0]) / 100000
             v_deg = float(matches[1]) / 100000
             sd = float(matches[2]) / 1000
 
-            hz_rad = math.radians(hz_deg)
-            v_rad = math.radians(v_deg)
-
+            hz_rad, v_rad = math.radians(hz_deg), math.radians(v_deg)
             hd = sd * math.sin(v_rad)
             dN = hd * math.cos(hz_rad)
             dE = hd * math.sin(hz_rad)
             dZ = (sd * math.cos(v_rad)) + h_instr - h_reflector
 
             return {
-                "Angolo Hz": f"{hz_deg:.4f}°",
-                "Angolo V": f"{v_deg:.4f}°",
-                "Dist. Inclinata": f"{sd:.3f} m",
-                "Dist. Orizzontale": f"{hd:.3f} m",
-                "Delta Nord (Y)": f"{dN:.3f} m",
-                "Delta Est (X)": f"{dE:.3f} m",
-                "Delta Quota (Z)": f"{dZ:.3f} m"
+                "Stato": "OK",
+                "Hz": f"{hz_deg:.4f}°",
+                "V": f"{v_deg:.4f}°",
+                "Distanza": f"{sd:.3f} m",
+                "X (Est)": f"{dE:.3f} m",
+                "Y (Nord)": f"{dN:.3f} m",
+                "Z (Quota)": f"{dZ:.3f} m"
             }
         except Exception as e:
             return {"Errore": str(e), "Raw": raw}
 
-    def change_face(self, position=1):
-        cmd = "P1" if position == 1 else "P2"
-        return self._send_command(cmd)
-
-    def laser_pointer(self, state=True):
-        cmd = "L1" if state else "L0"
-        return self._send_command(cmd)
-
-    def power_off(self):
-        return self._send_command("PW0")
-
+# --- INTERFACCIA ---
 def run_tps_monitoring():
-    st.set_page_config(page_title="Sokkia iX-1200 Controller", layout="wide")
-    st.title("🛰️ TPS Monitoring - Sokkia iX-1200")
+    st.set_page_config(page_title="Sokkia iX-1200 Pro", layout="wide")
+    
+    # Parametri in Sidebar
+    port_input = st.sidebar.text_input("Forza Porta COM", value="COM11")
+    baud = st.sidebar.selectbox("Baud Rate", [4800, 9600, 19200, 38400], index=1)
+    flow = st.sidebar.selectbox("Flow Control", ["None", "Xon/Xoff", "RTS/CTS"])
+    hi = st.sidebar.number_input("H. Strumento", value=1.500)
+    hp = st.sidebar.number_input("H. Prisma", value=1.500)
 
-    # Sidebar parametri altezze
-    st.sidebar.header("Parametri di Calcolo")
-    h_instr = st.sidebar.number_input("Altezza Strumento (m)", value=1.500, format="%.3f")
-    h_ref = st.sidebar.number_input("Altezza Prisma (m)", value=1.500, format="%.3f")
+    if st.sidebar.button("🔌 APPLICA E CONNETTI"):
+        st.session_state.stazione = SokkiaIXController(port=port_input, baudrate=baud, flow_control=flow)
 
-    # Configurazione seriale
-    st.sidebar.header("Parametri Comunicazione")
-    available_ports = [p.device for p in serial.tools.list_ports.comports()]
-    selected_port = st.text_input("Porta COM", value="COM11")
-    if selected_port not in available_ports:
-        st.warning(f"⚠️ Porta {selected_port} non trovata! Porte disponibili: {available_ports}")
-    baudrate = st.selectbox("Baud Rate", [1200,2400,4800,9600,19200,38400,115200], index=3)
-    data_bits = st.selectbox("Data Bits", [7,8], index=1)
-    parity_map = {"None": serial.PARITY_NONE, "Even": serial.PARITY_EVEN, "Odd": serial.PARITY_ODD}
-    parity_sel = st.selectbox("Parity", list(parity_map.keys()))
-    stop_bits = st.selectbox("Stop Bits", [1,1.5,2], index=0)
-    flow_ctrl = st.selectbox("Flow Control", ["None","Xon/Xoff","RTS/CTS"])
+    st.title("🛰️ Controllo Sokkia iX-1200")
 
-    if st.button("🔌 Connetti / Reset") and selected_port in available_ports:
-        st.session_state.stazione = SokkiaIXController(
-            port=selected_port,
-            baudrate=baudrate,
-            bytesize=data_bits,
-            parity=parity_map[parity_sel],
-            stopbits=stop_bits,
-            flow_control=flow_ctrl
-        )
-
-    # Controlli principali
     if "stazione" in st.session_state and st.session_state.stazione.ser:
-        col1, col2, col3 = st.columns(3)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("📏 ESEGUI MISURA (M+D)"):
+                with st.spinner("Puntando il prisma..."):
+                    res = st.session_state.stazione.measure_sequence(hi, hp)
+                    if res.get("Stato") == "OK":
+                        st.success("Misura Effettuata")
+                        st.table([res])
+                    else:
+                        st.error(res.get("Errore"))
+                        st.write(f"Grezzo: {res.get('Raw')}")
+        
+        with c2:
+            if st.button("📐 Check Tilt"):
+                st.info(f"Dati: {st.session_state.stazione._send_command('GT')}")
+        
+        with c3:
+            if st.button("💡 Laser ON/OFF"):
+                # Toggle logico semplice
+                current_laser = getattr(st.session_state, 'laser_state', False)
+                cmd = "L1" if not current_laser else "L0"
+                st.session_state.stazione._send_command(cmd)
+                st.session_state.laser_state = not current_laser
+                st.write(f"Laser: {'ACCESO' if not current_laser else 'SPENTO'}")
 
-        with col1:
-            if st.button("📏 ESEGUI MISURA"):
-                raw = st.session_state.stazione._send_command("D")
-                if raw:
-                    res = st.session_state.stazione.process_data(raw,h_instr,h_ref)
-                    st.json(res)
-
-        with col2:
-            if st.button("📐 Leggi Tilt"):
-                tilt = st.session_state.stazione._send_command("GT")
-                st.info(f"Tilt: {tilt}")
-
-        with col3:
-            if st.button("🔄 Azzeramento H"):
-                st.session_state.stazione._send_command("H0")
-                st.warning("Cerchio orizzontale azzerato.")
-
-        st.markdown("### Comandi avanzati")
-        col4, col5, col6 = st.columns(3)
-
-        with col4:
-            face = st.radio("Cambio Faccia", (1,2), horizontal=True)
-            if st.button("🔁 Ruota Cannocchiale"):
-                res = st.session_state.stazione.change_face(face)
-                st.info(f"Stato cambio faccia: {res}")
-
-        with col5:
-            laser_state = st.radio("Laser", ("Acceso","Spento"), horizontal=True)
-            if st.button("💡 Applica Laser"):
-                state_bool = True if laser_state=="Acceso" else False
-                st.session_state.stazione.laser_pointer(state_bool)
-
-        with col6:
-            if st.button("⏹ Spegni Strumento"):
-                st.session_state.stazione.power_off()
-                st.error("Comando di spegnimento inviato.")
+if __name__ == "__main__":
+    run_tps_monitoring()
