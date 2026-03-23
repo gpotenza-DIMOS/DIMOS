@@ -130,6 +130,7 @@ def run_map_manager():
             img_file = st.file_uploader("Carica PNG/JPG", type=['png','jpg','jpeg'], key="img_overlay")
             svg_file = st.file_uploader("Carica SVG", type=['svg'], key="svg_overlay")
             opacity = st.slider("Trasparenza overlay", 0.0, 1.0, 0.5, key="overlay_opacity")
+            lock_overlay = st.checkbox("Blocca overlay (non modificabile)", value=False, key="lock_overlay")
 
     # ---------- FILTRI ----------
     sel_dl, sel_sn, sel_params = None, None, []
@@ -144,40 +145,61 @@ def run_map_manager():
             sel_params = c3f.multiselect("Visualizza Parametri", params_list, default=params_list[:1])
 
     # ---------- MAPPA ----------
-    center = [43.610601, 13.436571]
     if st.session_state.punti:
-        last = list(st.session_state.punti.values())[-1]
-        center = [last["lat"], last["lon"]]
+        # centro = media dei punti caricati
+        lats = [p["lat"] for p in st.session_state.punti.values() if p["lat"] is not None]
+        lons = [p["lon"] for p in st.session_state.punti.values() if p["lon"] is not None]
+        center = [sum(lats)/len(lats), sum(lons)/len(lons)] if lats and lons else [45.4642, 9.1900]
+    else:
+        center = [45.4642, 9.1900]
 
-    m = folium.Map(location=center, zoom_start=15)
+    m = folium.Map(location=center, zoom_start=18)
 
-    # ---------- Overlay PNG/JPG ----------
+    # ---------- Overlay Interattivo con DistortableImage ----------
+    overlay_scripts = []
+    overlay_bounds = [[center[0]-0.0008, center[1]-0.0008],[center[0]+0.0008, center[1]+0.0008]]
+
     if img_file:
         img = Image.open(img_file)
         data_url = img_to_data_url(img)
-        bounds = [[center[0]-0.001, center[1]-0.001], [center[0]+0.001, center[1]+0.001]]
-        folium.raster_layers.ImageOverlay(
-            image=data_url,
-            bounds=bounds,
-            opacity=opacity,
-            interactive=True,
-            cross_origin=False,
-            zindex=1
-        ).add_to(m)
+        overlay_scripts.append(f"""
+            var overlay = new L.DistortableImageOverlay("{data_url}", {{
+                corners: {overlay_bounds},
+                selected:true,
+                keepAspectRatio:false,
+                opacity:{opacity}
+            }}).addTo(window.map);
+            overlay.enable();
+            overlay.options.editable = {str(not lock_overlay).lower()};
+        """)
 
-    # ---------- Overlay SVG ----------
     if svg_file:
         svg_data = svg_file.read().decode()
         data_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
-        bounds = [[center[0]-0.001, center[1]-0.001], [center[0]+0.001, center[1]+0.001]]
-        folium.raster_layers.ImageOverlay(
-            image=data_url,
-            bounds=bounds,
-            opacity=opacity,
-            interactive=True,
-            cross_origin=False,
-            zindex=1
-        ).add_to(m)
+        overlay_scripts.append(f"""
+            var overlay = new L.DistortableImageOverlay("{data_url}", {{
+                corners: {overlay_bounds},
+                selected:true,
+                keepAspectRatio:false,
+                opacity:{opacity}
+            }}).addTo(window.map);
+            overlay.enable();
+            overlay.options.editable = {str(not lock_overlay).lower()};
+        """)
+
+    if overlay_scripts:
+        m.get_root().html.add_child(folium.Element(f"""
+        <link rel="stylesheet" href="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.css" />
+        <script src="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.js"></script>
+        <script>
+        var check_map_ready = setInterval(function(){{
+            if (window.map){{
+                {"".join(overlay_scripts)}
+                clearInterval(check_map_ready);
+            }}
+        }}, 100);
+        </script>
+        """))
 
     # ---------- Marker dinamici ----------
     for key, p in st.session_state.punti.items():
