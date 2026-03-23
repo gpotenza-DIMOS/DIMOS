@@ -1,3 +1,4 @@
+# map_module.py
 import streamlit as st
 import folium
 from folium.plugins import Draw
@@ -20,7 +21,7 @@ def load_mac():
     return {}
 
 def save_mac(data):
-    with open(CONFIG_FILE,"w") as f:
+    with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
 def img_to_data_url(img):
@@ -31,9 +32,9 @@ def img_to_data_url(img):
     encoded = base64.b64encode(buffer.getvalue()).decode()
     return f"data:image/png;base64,{encoded}"
 
-# ---------------- APP -----------------
-def run_app():
-    st.set_page_config(layout="wide")
+# ---------------- MAIN ----------------
+def run_map_manager():
+    st.set_page_config(layout="wide", page_title="GIS Avanzato")
     st.title("📍 GIS Avanzato: Mappe, Immagini, CAD/SVG")
 
     if 'punti' not in st.session_state:
@@ -41,10 +42,10 @@ def run_app():
     if 'overlays' not in st.session_state:
         st.session_state.overlays = []
 
-    # --- SIDEBAR ---
+    # ---------- SIDEBAR ----------
     with st.sidebar:
-        st.header("📥 Carica File")
-        img_file = st.file_uploader("Immagine (PNG/JPG)", type=["png","jpg","jpeg"])
+        st.header("📥 Carica file")
+        img_file = st.file_uploader("Immagine PNG/JPG", type=["png","jpg","jpeg"])
         svg_file = st.file_uploader("SVG / DXF convertito", type=["svg"])
         if st.button("🔄 Reset Tutto"):
             st.session_state.punti = {}
@@ -53,15 +54,15 @@ def run_app():
                 os.remove(CONFIG_FILE)
             st.experimental_rerun()
 
-    # --- MAPPA ---
+    # ---------- MAPPA ----------
     center = [45.4642, 9.1900]
     m = folium.Map(location=center, zoom_start=17)
 
-    # --- Overlay Immagini JPG/PNG ---
+    # --- Overlay immagini JPG/PNG ---
     if img_file:
         img = Image.open(img_file)
         img_url = img_to_data_url(img)
-        bounds = [[45.4635,9.1895],[45.4650,9.1910]]
+        bounds = [[45.4635, 9.1895], [45.4650, 9.1910]]
         overlay_js = f"""
         <script src="https://unpkg.com/leaflet-distortableimage"></script>
         <script>
@@ -88,7 +89,7 @@ def run_app():
     if svg_file:
         svg_data = svg_file.read().decode()
         img_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
-        bounds = [[45.4635,9.1895],[45.4650,9.1910]]
+        bounds = [[45.4635, 9.1895], [45.4650, 9.1910]]
         overlay_js = f"""
         <script src="https://unpkg.com/leaflet-distortableimage"></script>
         <script>
@@ -111,16 +112,18 @@ def run_app():
         m.get_root().html.add_child(folium.Element(overlay_js))
         st.success("Overlay SVG caricato e scalabile/rotabile")
 
-    # --- Marker Editable ---
-    for k,p in st.session_state.punti.items():
-        folium.Marker([p["lat"],p["lon"]],
-                      tooltip=p.get("label",f"{p['lat']},{p['lon']}"),
-                      draggable=True).add_to(m)
+    # ---------- MARKER EDITABLE ----------
+    for k, p in st.session_state.punti.items():
+        folium.Marker(
+            [p["lat"], p["lon"]],
+            tooltip=p.get("label", f"{p['lat']},{p['lon']}"),
+            draggable=True
+        ).add_to(m)
 
-    # --- Draw Plugin per editing marker ---
+    # ---------- Draw Plugin per aggiungere/eliminare marker ----------
     Draw(export=True, filename="map_export.geojson").add_to(m)
 
-    # --- Visualizza mappa ---
+    # ---------- Visualizza mappa ----------
     map_data = st_folium(m, width=1000, height=700)
 
     # Salva marker click
@@ -128,9 +131,6 @@ def run_app():
         lat = map_data["last_clicked"]["lat"]
         lon = map_data["last_clicked"]["lng"]
         key = f"Punto_{len(st.session_state.punti)+1}"
-        st.session_state.punti[key] = {"lat":lat,"lon":lon,"label":f"{lat:.5f},{lon:.5f}"}
+        st.session_state.punti[key] = {"lat": lat, "lon": lon, "label": f"{lat:.5f},{lon:.5f}"}
         save_mac(st.session_state.punti)
         st.success(f"Aggiunto marker in {lat:.5f},{lon:.5f}")
-
-if __name__=="__main__":
-    run_app()
