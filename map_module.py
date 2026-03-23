@@ -80,17 +80,17 @@ def run_map_manager():
     st.set_page_config(layout="wide", page_title="Monitoraggio MAC")
     st.title("🌍 Monitoraggio Sensori Georeferenziati con Overlay")
 
-    # ---------- INIZIALIZZAZIONE SESSION_STATE ----------
+    # ---------- SESSION STATE ----------
     if 'punti' not in st.session_state or not isinstance(st.session_state.punti, dict):
         st.session_state.punti = load_mac()
     if 'anagrafica' not in st.session_state:
         st.session_state.anagrafica = {}
-    if 'overlays' not in st.session_state:
-        st.session_state.overlays = []
+    if 'overlay' not in st.session_state:
+        st.session_state.overlay = {"img_file": None, "corners": None, "locked": False, "opacity": 0.5}
 
     # ---------- BARRA SUPERIORE COMPATTA ----------
-    with st.expander("📂 Carica / Inserimento manuale / Overlay", expanded=True):
-        c1, c2, c3 = st.columns([2, 1, 1])
+    with st.expander("📂 Carica / Inserimento / Overlay", expanded=True):
+        c1, c2, c3 = st.columns([2,1,1])
 
         with c1:
             file_input = st.file_uploader("Carica Excel", type=['xlsx','xlsm'], key="excel")
@@ -127,10 +127,16 @@ def run_map_manager():
             m_shape = st.selectbox("Forma predefinita", ["circle","square","triangle"], key="shape_picker")
 
         with c3:
-            img_file = st.file_uploader("Carica PNG/JPG", type=['png','jpg','jpeg'], key="img_overlay")
-            svg_file = st.file_uploader("Carica SVG", type=['svg'], key="svg_overlay")
-            opacity = st.slider("Trasparenza overlay", 0.0, 1.0, 0.5, key="overlay_opacity")
-            lock_overlay = st.checkbox("Blocca overlay (non modificabile)", value=False, key="lock_overlay")
+            uploaded_img = st.file_uploader("Carica PNG/JPG", type=['png','jpg','jpeg'], key="img_overlay")
+            overlay_opacity = st.slider("Trasparenza overlay", 0.0, 1.0, st.session_state.overlay["opacity"], key="overlay_opacity")
+            locked = st.checkbox("🔒 Blocca overlay", value=st.session_state.overlay["locked"], key="overlay_lock")
+            if uploaded_img:
+                st.session_state.overlay["img_file"] = uploaded_img
+                st.session_state.overlay["locked"] = locked
+                st.session_state.overlay["opacity"] = overlay_opacity
+            else:
+                overlay_opacity = st.session_state.overlay["opacity"]
+                locked = st.session_state.overlay["locked"]
 
     # ---------- FILTRI ----------
     sel_dl, sel_sn, sel_params = None, None, []
@@ -145,61 +151,53 @@ def run_map_manager():
             sel_params = c3f.multiselect("Visualizza Parametri", params_list, default=params_list[:1])
 
     # ---------- MAPPA ----------
+    center = [45.4642, 9.1900]
     if st.session_state.punti:
-        # centro = media dei punti caricati
-        lats = [p["lat"] for p in st.session_state.punti.values() if p["lat"] is not None]
-        lons = [p["lon"] for p in st.session_state.punti.values() if p["lon"] is not None]
-        center = [sum(lats)/len(lats), sum(lons)/len(lons)] if lats and lons else [45.4642, 9.1900]
-    else:
-        center = [45.4642, 9.1900]
+        last = list(st.session_state.punti.values())[-1]
+        center = [last["lat"], last["lon"]]
 
-    m = folium.Map(location=center, zoom_start=18)
+    m = folium.Map(location=center, zoom_start=15)
 
-    # ---------- Overlay Interattivo con DistortableImage ----------
-    overlay_scripts = []
-    overlay_bounds = [[center[0]-0.0008, center[1]-0.0008],[center[0]+0.0008, center[1]+0.0008]]
-
-    if img_file:
-        img = Image.open(img_file)
+    # ---------- Overlay PNG con gestione vertici ----------
+    if st.session_state.overlay["img_file"]:
+        img = Image.open(st.session_state.overlay["img_file"])
         data_url = img_to_data_url(img)
-        overlay_scripts.append(f"""
-            var overlay = new L.DistortableImageOverlay("{data_url}", {{
-                corners: {overlay_bounds},
-                selected:true,
-                keepAspectRatio:false,
-                opacity:{opacity}
-            }}).addTo(window.map);
-            overlay.enable();
-            overlay.options.editable = {str(not lock_overlay).lower()};
-        """)
+        corners = st.session_state.overlay.get("corners")
+        if not corners:
+            # inizializzazione overlay centrato
+            delta_lat, delta_lon = 0.001, 0.001
+            corners = [
+                [center[0]-delta_lat, center[1]-delta_lon],
+                [center[0]-delta_lat, center[1]+delta_lon],
+                [center[0]+delta_lat, center[1]+delta_lon],
+                [center[0]+delta_lat, center[1]-delta_lon]
+            ]
+            st.session_state.overlay["corners"] = corners
 
-    if svg_file:
-        svg_data = svg_file.read().decode()
-        data_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
-        overlay_scripts.append(f"""
-            var overlay = new L.DistortableImageOverlay("{data_url}", {{
-                corners: {overlay_bounds},
-                selected:true,
-                keepAspectRatio:false,
-                opacity:{opacity}
-            }}).addTo(window.map);
-            overlay.enable();
-            overlay.options.editable = {str(not lock_overlay).lower()};
-        """)
-
-    if overlay_scripts:
-        m.get_root().html.add_child(folium.Element(f"""
-        <link rel="stylesheet" href="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.css" />
+        locked_js = "false" if not locked else "true"
+        overlay_script = f"""
         <script src="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.js"></script>
         <script>
-        var check_map_ready = setInterval(function(){{
-            if (window.map){{
-                {"".join(overlay_scripts)}
-                clearInterval(check_map_ready);
-            }}
-        }}, 100);
+        function send_corners(corners){{
+            const streamlit_el = document.getElementById("overlay_corners");
+            streamlit_el.value = JSON.stringify(corners);
+            streamlit_el.dispatchEvent(new Event('change'));
+        }}
+        var img_overlay = new L.DistortableImageOverlay("{data_url}", {{
+            corners: {corners},
+            selected:true,
+            keepAspectRatio:false,
+            opacity:{overlay_opacity},
+            lock:{locked_js}
+        }}).addTo(window.map);
+        img_overlay.enable();
+        img_overlay.on('edit', function() {{
+            send_corners(img_overlay.getCorners());
+        }});
         </script>
-        """))
+        <input type="hidden" id="overlay_corners" value='{json.dumps(corners)}'>
+        """
+        m.get_root().html.add_child(folium.Element(overlay_script))
 
     # ---------- Marker dinamici ----------
     for key, p in st.session_state.punti.items():
@@ -235,6 +233,7 @@ def run_map_manager():
     if st.button("🗑️ Reset totale"):
         st.session_state.punti = {}
         st.session_state.anagrafica = {}
+        st.session_state.overlay = {"img_file": None, "corners": None, "locked": False, "opacity": 0.5}
         if os.path.exists(CONFIG_FILE): os.remove(CONFIG_FILE)
         st.experimental_rerun()
 
