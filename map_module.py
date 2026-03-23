@@ -3,11 +3,9 @@ import folium
 from folium.plugins import Draw
 from streamlit_folium import st_folium
 from PIL import Image
-import numpy as np
-import tifffile
-import json
 import base64
 import os
+import json
 
 CONFIG_FILE = "mac_positions.json"
 
@@ -35,21 +33,18 @@ def img_to_data_url(img):
 
 # ---------------- APP -----------------
 def run_app():
-
     st.set_page_config(layout="wide")
-    st.title("📍 GIS Avanzato: Mappe, Immagini, GeoTIFF, CAD/SVG")
+    st.title("📍 GIS Avanzato: Mappe, Immagini, CAD/SVG")
 
-    # ---------- SESSION STATE ----------
     if 'punti' not in st.session_state:
         st.session_state.punti = load_mac()
     if 'overlays' not in st.session_state:
         st.session_state.overlays = []
 
-    # ---------- SIDEBAR ----------
+    # --- SIDEBAR ---
     with st.sidebar:
         st.header("📥 Carica File")
         img_file = st.file_uploader("Immagine (PNG/JPG)", type=["png","jpg","jpeg"])
-        geotiff_file = st.file_uploader("GeoTIFF", type=["tif","tiff"])
         svg_file = st.file_uploader("SVG / DXF convertito", type=["svg"])
         if st.button("🔄 Reset Tutto"):
             st.session_state.punti = {}
@@ -58,11 +53,11 @@ def run_app():
                 os.remove(CONFIG_FILE)
             st.experimental_rerun()
 
-    # ---------- MAPPA ----------
+    # --- MAPPA ---
     center = [45.4642, 9.1900]
     m = folium.Map(location=center, zoom_start=17)
 
-    # ---------- OVERLAY IMMAGINI PNG/JPG ----------
+    # --- Overlay Immagini JPG/PNG ---
     if img_file:
         img = Image.open(img_file)
         img_url = img_to_data_url(img)
@@ -87,39 +82,9 @@ def run_app():
         </script>
         """
         m.get_root().html.add_child(folium.Element(overlay_js))
-        st.success("Overlay immagine PNG/JPG caricato e scalabile/rotabile")
+        st.success("Overlay immagine caricato e scalabile/rotabile")
 
-    # ---------- GEO TIFF ----------
-    if geotiff_file:
-        img_array = tifffile.imread(geotiff_file)
-        if img_array.ndim == 2:
-            img_array = np.stack([img_array]*3, axis=-1)
-        img = Image.fromarray(img_array)
-        bounds = [[45.4635,9.1895],[45.4650,9.1910]]
-        img_url = img_to_data_url(img)
-        overlay_js = f"""
-        <script src="https://unpkg.com/leaflet-distortableimage"></script>
-        <script>
-        var map = window.map_{id(m)};
-        var overlay = new L.DistortableImageOverlay(
-            "{img_url}",
-            {{
-                corners: [
-                    [{bounds[0][0]}, {bounds[0][1]}],
-                    [{bounds[0][0]}, {bounds[1][1]}],
-                    [{bounds[1][0]}, {bounds[1][1]}],
-                    [{bounds[1][0]}, {bounds[0][1]}]
-                ],
-                opacity: 0.7,
-                selected: true
-            }}
-        ).addTo(map);
-        </script>
-        """
-        m.get_root().html.add_child(folium.Element(overlay_js))
-        st.success("GeoTIFF caricato e scalabile/rotabile")
-
-    # ---------- SVG ----------
+    # --- Overlay SVG ---
     if svg_file:
         svg_data = svg_file.read().decode()
         img_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
@@ -144,18 +109,18 @@ def run_app():
         </script>
         """
         m.get_root().html.add_child(folium.Element(overlay_js))
-        st.success("SVG caricato e scalabile/rotabile")
+        st.success("Overlay SVG caricato e scalabile/rotabile")
 
-    # ---------- MARKER EDITABLE ----------
+    # --- Marker Editable ---
     for k,p in st.session_state.punti.items():
         folium.Marker([p["lat"],p["lon"]],
                       tooltip=p.get("label",f"{p['lat']},{p['lon']}"),
                       draggable=True).add_to(m)
 
-    # plugin Draw per aggiungere/eliminare marker
+    # --- Draw Plugin per editing marker ---
     Draw(export=True, filename="map_export.geojson").add_to(m)
 
-    # ---------- VISUALIZZA MAPPA ----------
+    # --- Visualizza mappa ---
     map_data = st_folium(m, width=1000, height=700)
 
     # Salva marker click
