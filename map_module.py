@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import pandas as pd
 import json
 import os
@@ -42,7 +42,9 @@ def parse_web_name(web_name):
 
 def parse_excel_advanced(file):
     xls = pd.ExcelFile(file)
-    df = pd.read_excel(xls, sheet_name="NAME" if "NAME" in xls.sheet_names else 0, header=None).fillna("")
+    df = pd.read_excel(
+        xls, sheet_name="NAME" if "NAME" in xls.sheet_names else 0, header=None
+    ).fillna("")
     ana = {}
     for c in range(1, df.shape[1]):
         dl_raw = str(df.iloc[0, c]).strip()
@@ -69,9 +71,13 @@ def run_map_manager():
     st.set_page_config(layout="wide", page_title="Monitoraggio MAC")
     st.title("🌍 Monitoraggio Sensori Georeferenziati")
 
-    if 'punti' not in st.session_state:
+    # ---------- INIZIALIZZAZIONE SESSION_STATE ----------
+    if 'punti' not in st.session_state or not isinstance(st.session_state.punti, dict):
         st.session_state.punti = load_mac()
-    if 'anagrafica' not in st.session_state:
+        if not isinstance(st.session_state.punti, dict):
+            st.session_state.punti = {}
+
+    if 'anagrafica' not in st.session_state or not isinstance(st.session_state.anagrafica, dict):
         st.session_state.anagrafica = {}
 
     # ---------- SIDEBAR ----------
@@ -84,7 +90,7 @@ def run_map_manager():
             for dl, sensori in ana.items():
                 for sn, info in sensori.items():
                     key = f"{dl}|{sn}"
-                    if info["lat"] is not None:
+                    if info["lat"] is not None and info["lon"] is not None:
                         st.session_state.punti[key] = {
                             "dl": dl, "sn": sn, "lat": info["lat"], "lon": info["lon"], "params": info["params"]
                         }
@@ -96,13 +102,19 @@ def run_map_manager():
         m_dl = st.text_input("Datalogger")
         m_sn = st.text_input("Sensore")
         c_lat, c_lon = st.columns(2)
-        m_lat = c_lat.number_input("Lat", value=st.session_state.get("click_lat", 45.4642), format="%.6f")
-        m_lon = c_lon.number_input("Lon", value=st.session_state.get("click_lon", 9.1900), format="%.6f")
+        m_lat = c_lat.number_input(
+            "Lat", value=st.session_state.get("click_lat", 45.4642), format="%.6f"
+        )
+        m_lon = c_lon.number_input(
+            "Lon", value=st.session_state.get("click_lon", 9.1900), format="%.6f"
+        )
 
         if st.button("➕ Aggiungi punto"):
             if m_dl and m_sn:
                 key = f"{m_dl}|{m_sn}"
-                st.session_state.punti[key] = {"dl": m_dl, "sn": m_sn, "lat": m_lat, "lon": m_lon, "params": []}
+                st.session_state.punti[key] = {
+                    "dl": m_dl, "sn": m_sn, "lat": m_lat, "lon": m_lon, "params": []
+                }
                 save_mac(st.session_state.punti)
                 st.rerun()
 
@@ -133,7 +145,7 @@ def run_map_manager():
 
     # ---------- MAPPA ----------
     center = [45.4642, 9.1900]
-    if st.session_state.punti:
+    if st.session_state.punti and isinstance(st.session_state.punti, dict) and len(st.session_state.punti) > 0:
         last = list(st.session_state.punti.values())[-1]
         center = [last["lat"], last["lon"]]
 
@@ -143,30 +155,31 @@ def run_map_manager():
     rot = "transform: rotate(45deg);" if m_shape == "triangle" else ""
     rad = "50%" if m_shape == "circle" else "0%"
 
-    for key, p in st.session_state.punti.items():
-        d_p, s_p = p["dl"], p["sn"]
-        
-        # Logica di filtro
-        if sel_dl and sel_dl != "Tutti" and d_p != sel_dl: continue
-        if sel_sn and sel_sn != "Tutti" and s_p != sel_sn: continue
+    if st.session_state.punti and isinstance(st.session_state.punti, dict):
+        for key, p in st.session_state.punti.items():
+            d_p, s_p = p["dl"], p["sn"]
+            
+            # Logica di filtro
+            if sel_dl and sel_dl != "Tutti" and d_p != sel_dl: continue
+            if sel_sn and sel_sn != "Tutti" and s_p != sel_sn: continue
 
-        popup_txt = f"<b>{d_p} - {s_p}</b><br>"
-        for par in p.get("params", []):
-            if not sel_params or par in sel_params:
-                popup_txt += f"{par}<br>"
+            popup_txt = f"<b>{d_p} - {s_p}</b><br>"
+            for par in p.get("params", []):
+                if not sel_params or par in sel_params:
+                    popup_txt += f"{par}<br>"
 
-        html_marker = f"""
-        <div style="background-color:{m_color}; border:2px solid white; border-radius:{rad}; 
-                    width:40px; height:40px; display:flex; align-items:center; justify-content:center; 
-                    color:white; font-size:9px; font-weight:bold; {rot}">{s_p[:5]}</div>
-        """
+            html_marker = f"""
+            <div style="background-color:{m_color}; border:2px solid white; border-radius:{rad}; 
+                        width:40px; height:40px; display:flex; align-items:center; justify-content:center; 
+                        color:white; font-size:9px; font-weight:bold; {rot}">{s_p[:5]}</div>
+            """
 
-        folium.Marker(
-            [p["lat"], p["lon"]],
-            icon=DivIcon(icon_size=(40,40), icon_anchor=(20,20), html=html_marker),
-            tooltip=f"{d_p} - {s_p}",
-            popup=folium.Popup(popup_txt, max_width=200)
-        ).add_to(m)
+            folium.Marker(
+                [p["lat"], p["lon"]],
+                icon=DivIcon(icon_size=(40,40), icon_anchor=(20,20), html=html_marker),
+                tooltip=f"{d_p} - {s_p}",
+                popup=folium.Popup(popup_txt, max_width=200)
+            ).add_to(m)
 
     map_res = st_folium(m, width="100%", height=600)
 
