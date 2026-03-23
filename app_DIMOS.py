@@ -24,6 +24,7 @@ st.markdown("""
 
 if "auth" not in st.session_state: st.session_state["auth"] = False
 
+# Gestione Login
 if not st.session_state["auth"]:
     _, col_login, _ = st.columns([1, 1, 1])
     with col_login:
@@ -35,11 +36,12 @@ if not st.session_state["auth"]:
             if st.button("ACCEDI"):
                 if u == "asdf" and p == "asdf":
                     st.session_state["auth"] = True
+                    st.session_state["page"] = "home"
                     st.rerun()
                 else: st.error("Credenziali Errate")
     st.stop()
 
-# SIDEBAR: Navigazione Completa
+# SIDEBAR: Navigazione
 with st.sidebar:
     if os.path.exists("logo_microgeo.jpg"): st.image("logo_microgeo.jpg", use_container_width=True)
     st.markdown("<br>", unsafe_allow_html=True)
@@ -47,12 +49,15 @@ with st.sidebar:
     if st.button("📈 ANALISI GRAFICA"): st.session_state["page"] = "pl"
     if st.button("📍 MAPPA & STRUTTURE"): st.session_state["page"] = "map"
     if st.button("📏 ELETTROLIVELLE"): st.session_state["page"] = "el"
-    if st.button("📐 TPS monitoring"): st.session_state["page"] = "el"
+    if st.button("📐 TPS MONITORING"): st.session_state["page"] = "tps"
+    
     st.markdown("<br><br>", unsafe_allow_html=True)
     if st.button("🚪 LOGOUT"):
         st.session_state["auth"] = False
+        st.session_state["page"] = "home"
         st.rerun()
 
+# Logica di caricamento pagine
 pg = st.session_state.get("page", "home")
 
 if pg == "home":
@@ -65,29 +70,40 @@ if pg == "home":
         if os.path.exists("montita.jpg"): st.image("montita.jpg", width=400)
     
     st.markdown("<br>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4) # Aggiunta colonna per TPS
     with c1:
         with st.container(border=True):
             st.markdown("#### Grafici e Report")
-            if st.button("Vai a GRAFICI", key="btn_pl"): st.session_state["page"] = "pl"; st.rerun()
+            if st.button("Vai a GRAFICI", key="btn_pl"): 
+                st.session_state["page"] = "pl"; st.rerun()
     with c2:
         with st.container(border=True):
             st.markdown("#### Mappa Sensori")
-            if st.button("Vai a MAPPA", key="btn_map"): st.session_state["page"] = "map"; st.rerun()
+            if st.button("Vai a MAPPA", key="btn_map"): 
+                st.session_state["page"] = "map"; st.rerun()
     with c3:
         with st.container(border=True):
             st.markdown("#### Elettrolivelle")
-            if st.button("Vai a ELETTROLIVELLE", key="btn_el"): st.session_state["page"] = "el"; st.rerun()
+            if st.button("Vai a ELETTROLIVELLE", key="btn_el"): 
+                st.session_state["page"] = "el"; st.rerun()
+    with c4:
+        with st.container(border=True):
+            st.markdown("#### Monitoraggio TPS")
+            if st.button("Vai a TPS", key="btn_tps_home"): 
+                st.session_state["page"] = "tps"; st.rerun()
 
 elif pg == "pl":
     import plotter_mod
     plotter_mod.run_plotter()
+
 elif pg == "map":
     import map_module
     map_module.run_map_manager()
+
 elif pg == "el":
     import elettrolivelle_mod
     elettrolivelle_mod.run_elettrolivelle()
-elif pg == "el":
+
+elif pg == "tps":
     import TPS_mod
-    TPS_mod.run_TPS()
+    TPS_mod.run_tps_monitoring()
