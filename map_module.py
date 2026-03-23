@@ -92,7 +92,7 @@ def run_map_manager():
     if 'punti' not in st.session_state: st.session_state.punti = load_mac()
     if 'anagrafica' not in st.session_state: st.session_state.anagrafica = {}
     if 'img_params' not in st.session_state:
-        st.session_state.img_params = {"w": 100, "h": 100, "rot": 0, "off_x": 0, "off_y": 0, "opacity": 0.5}
+        st.session_state.img_params = {"w": 100, "h": 100, "rot": 0, "opacity": 0.5}
 
     # ---------- BARRA SUPERIORE ----------
     with st.expander("📂 Carica / Inserimento / Overlay", expanded=True):
@@ -124,7 +124,7 @@ def run_map_manager():
                         "params": [], "color": "#0066ff", "shape": "circle"
                     }
                     save_mac(st.session_state.punti)
-                    st.rerun()
+                    st.experimental_rerun()
 
         with c2:
             m_color = st.color_picker("Colore predefinito", "#0066ff")
@@ -132,11 +132,10 @@ def run_map_manager():
 
         with c3:
             uploaded_img = st.file_uploader("Carica Planimetria (PNG/JPG)", type=['png','jpg','jpeg'])
-            if uploaded_img:
-                st.session_state.img_params["w"] = st.number_input("Larghezza (m)", 1, 5000, st.session_state.img_params["w"])
-                st.session_state.img_params["h"] = st.number_input("Altezza (m)", 1, 5000, st.session_state.img_params["h"])
-                st.session_state.img_params["rot"] = st.slider("Rotazione (°)", 0, 360, st.session_state.img_params["rot"])
-                st.session_state.img_params["opacity"] = st.slider("Trasparenza", 0.0, 1.0, st.session_state.img_params["opacity"])
+            st.session_state.img_params["w"] = st.number_input("Larghezza (m)", 1, 5000, st.session_state.img_params["w"])
+            st.session_state.img_params["h"] = st.number_input("Altezza (m)", 1, 5000, st.session_state.img_params["h"])
+            st.session_state.img_params["rot"] = st.slider("Rotazione (°)", 0, 360, st.session_state.img_params["rot"])
+            st.session_state.img_params["opacity"] = st.slider("Trasparenza", 0.0, 1.0, st.session_state.img_params["opacity"])
 
     # ---------- FILTRI ----------
     sel_dl, sel_sn, sel_params = None, None, []
@@ -158,29 +157,34 @@ def run_map_manager():
 
     m = folium.Map(location=center, zoom_start=19)
 
-    # Iniezione CSS/JS per l'overlay
+    # Iniezione CSS/JS per overlay
     m.get_root().html.add_child(folium.Element("""
         <link rel="stylesheet" href="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.css">
         <script src="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.js"></script>
     """))
 
-    # Gestione Overlay Planimetria
+    # Overlay planimetria
     if uploaded_img:
         img = Image.open(uploaded_img)
         data_url = img_to_data_url(img)
-        corners = get_rotated_corners(center[0], center[1], st.session_state.img_params["w"], st.session_state.img_params["h"], st.session_state.img_params["rot"])
-        
+        corners = get_rotated_corners(center[0], center[1],
+                                      st.session_state.img_params["w"],
+                                      st.session_state.img_params["h"],
+                                      st.session_state.img_params["rot"])
         overlay_js = f"""
         <script>
         var interval = setInterval(function() {{
-            if (window.map) {{
+            if(window.map){{
                 var img = new L.DistortableImageOverlay("{data_url}", {{
-                    corners: [
-                        L.latLng({corners[0][0]}, {corners[0][1]}), L.latLng({corners[1][0]}, {corners[1][1]}),
-                        L.latLng({corners[2][0]}, {corners[2][1]}), L.latLng({corners[3][0]}, {corners[3][1]})
+                    corners:[
+                        L.latLng({corners[0][0]}, {corners[0][1]}),
+                        L.latLng({corners[1][0]}, {corners[1][1]}),
+                        L.latLng({corners[2][0]}, {corners[2][1]}),
+                        L.latLng({corners[3][0]}, {corners[3][1]})
                     ],
-                    opacity: {st.session_state.img_params["opacity"]},
-                    editable: true
+                    opacity:{st.session_state.img_params["opacity"]},
+                    selected:true,
+                    keepAspectRatio:false
                 }}).addTo(window.map);
                 clearInterval(interval);
             }}
@@ -212,12 +216,13 @@ def run_map_manager():
         st.session_state.click_lat = map_res["last_clicked"]["lat"]
         st.session_state.click_lon = map_res["last_clicked"]["lng"]
 
+    # ---------- RESET TOTALE ----------
     if st.button("🗑️ Reset totale"):
         st.session_state.punti = {}
         st.session_state.anagrafica = {}
-        st.session_state.img_params = {"w": 100, "h": 100, "rot": 0, "off_x": 0, "off_y": 0, "opacity": 0.5}
+        st.session_state.img_params = {"w": 100, "h": 100, "rot": 0, "opacity": 0.5}
         if os.path.exists(CONFIG_FILE): os.remove(CONFIG_FILE)
-        st.rerun()
+        st.experimental_rerun()
 
 if __name__ == "__main__":
     run_map_manager()
