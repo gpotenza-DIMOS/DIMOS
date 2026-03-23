@@ -1,4 +1,4 @@
-import streamlit as st 
+import streamlit as st
 import pandas as pd
 import json
 import os
@@ -7,7 +7,6 @@ from folium.features import DivIcon
 from streamlit_folium import st_folium
 import re
 from PIL import Image
-import base64
 
 CONFIG_FILE = "mac_positions.json"
 
@@ -68,19 +67,12 @@ def parse_excel_advanced(file):
             ana[dl][sn]["params"].append(param_full)
     return ana
 
-def img_to_data_url(img):
-    from io import BytesIO
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    encoded = base64.b64encode(buffer.getvalue()).decode()
-    return f"data:image/png;base64,{encoded}"
-
 # ----------------- MAIN -----------------
 def run_map_manager():
     st.set_page_config(layout="wide", page_title="Monitoraggio MAC")
-    st.title("🌍 MAPPA - Monitoraggio Sensori Georeferenziati")
+    st.title("🌍 Monitoraggio Sensori Georeferenziati con Overlay")
 
-    # ---------- INIZIALIZZAZIONE SESSION_STATE ----------
+    # ---------- SESSION_STATE ----------
     if 'punti' not in st.session_state or not isinstance(st.session_state.punti, dict):
         st.session_state.punti = load_mac()
     if 'anagrafica' not in st.session_state:
@@ -88,7 +80,7 @@ def run_map_manager():
     if 'overlays' not in st.session_state:
         st.session_state.overlays = []
 
-    # ---------- SETUP SOPRA MAPPA ----------
+    # ---------- UPLOAD E INPUT ---------- 
     with st.container():
         st.subheader("📂 Carica Excel / Inserimento manuale / Marker / Overlay")
         c1, c2 = st.columns([2,1])
@@ -129,9 +121,8 @@ def run_map_manager():
             st.markdown("### Marker predefiniti")
             m_color = st.color_picker("Colore predefinito", "#0066ff")
             m_shape = st.selectbox("Forma predefinita", ["circle","square","triangle"])
-            st.markdown("### Overlay immagine/SVG")
+            st.markdown("### Overlay immagine PNG/JPG")
             img_file = st.file_uploader("Carica immagine PNG/JPG", type=['png','jpg','jpeg'])
-            svg_file = st.file_uploader("Carica SVG (o CAD convertito)", type=['svg'])
             opacity = st.slider("Trasparenza overlay", 0.0, 1.0, 0.5)
 
     # ---------- FILTRI ----------
@@ -147,64 +138,25 @@ def run_map_manager():
             sel_params = c3f.multiselect("Visualizza Parametri", params_list, default=params_list[:1])
 
     # ---------- MAPPA ----------
-    center = [45.4642, 9.1900]
+    center = [43.610601, 13.436571]
     if st.session_state.punti:
         last = list(st.session_state.punti.values())[-1]
         center = [last["lat"], last["lon"]]
 
     m = folium.Map(location=center, zoom_start=15)
 
-    # ---------- Overlay PNG/JPG o SVG centrati ----------
-    overlay_scripts = []
-
+    # ---------- Overlay PNG/JPG ----------
     if img_file:
         img = Image.open(img_file)
-        data_url = img_to_data_url(img)
-        overlay_scripts.append(f"""
-        var overlay = new L.DistortableImageOverlay("{data_url}", {{
-            corners: [
-                [{center[0]-0.0008}, {center[1]-0.0008}],
-                [{center[0]-0.0008}, {center[1]+0.0008}],
-                [{center[0]+0.0008}, {center[1]+0.0008}],
-                [{center[0]+0.0008}, {center[1]-0.0008}]
-            ],
-            selected:true,
-            keepAspectRatio:false,
-            opacity:{opacity}
-        }}).addTo(window.map);
-        overlay.enable();
-        """)
-
-    if svg_file:
-        svg_data = svg_file.read().decode()
-        data_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
-        overlay_scripts.append(f"""
-        var overlay = new L.DistortableImageOverlay("{data_url}", {{
-            corners: [
-                [{center[0]-0.0008}, {center[1]-0.0008}],
-                [{center[0]-0.0008}, {center[1]+0.0008}],
-                [{center[0]+0.0008}, {center[1]+0.0008}],
-                [{center[0]+0.0008}, {center[1]-0.0008}]
-            ],
-            selected:true,
-            keepAspectRatio:false,
-            opacity:{opacity}
-        }}).addTo(window.map);
-        overlay.enable();
-        """)
-
-    if overlay_scripts:
-        m.get_root().html.add_child(folium.Element(f"""
-        <script src="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.js"></script>
-        <script>
-        var check_map_ready = setInterval(function(){{
-            if (window.map){{
-                {"".join(overlay_scripts)}
-                clearInterval(check_map_ready);
-            }}
-        }}, 100);
-        </script>
-        """))
+        bounds = [[center[0]-0.001, center[1]-0.001], [center[0]+0.001, center[1]+0.001]]
+        folium.raster_layers.ImageOverlay(
+            image=img,
+            bounds=bounds,
+            opacity=opacity,
+            interactive=True,
+            cross_origin=False,
+            zindex=1,
+        ).add_to(m)
 
     # ---------- Marker dinamici ----------
     for key, p in st.session_state.punti.items():
