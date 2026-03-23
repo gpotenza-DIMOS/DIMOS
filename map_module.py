@@ -78,7 +78,7 @@ def img_to_data_url(img):
 # ----------------- MAIN -----------------
 def run_map_manager():
     st.set_page_config(layout="wide", page_title="Monitoraggio MAC")
-    st.title("🌍 Monitoraggio Sensori Georeferenziati con Overlay")
+    st.title("🌍 MAPPA - Monitoraggio Sensori Georeferenziati")
 
     # ---------- INIZIALIZZAZIONE SESSION_STATE ----------
     if 'punti' not in st.session_state or not isinstance(st.session_state.punti, dict):
@@ -154,63 +154,57 @@ def run_map_manager():
 
     m = folium.Map(location=center, zoom_start=15)
 
-    # ---------- Overlay immagine con possibilità di spostare, ridimensionare e ruotare ----------
+    # ---------- Overlay PNG/JPG o SVG centrati ----------
+    overlay_scripts = []
+
     if img_file:
         img = Image.open(img_file)
         data_url = img_to_data_url(img)
-        lat_center, lon_center = center
-        delta = 0.0008  # bounding box iniziale
-        bounds = [
-            [lat_center - delta, lon_center - delta],
-            [lat_center + delta, lon_center + delta]
-        ]
-        overlay_js = f"""
-        <script src="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.js"></script>
-        <script>
-        var map = window.map_{id(m)};
+        overlay_scripts.append(f"""
         var overlay = new L.DistortableImageOverlay("{data_url}", {{
             corners: [
-                [{bounds[0][0]}, {bounds[0][1]}],
-                [{bounds[0][0]}, {bounds[1][1]}],
-                [{bounds[1][0]}, {bounds[1][1]}],
-                [{bounds[1][0]}, {bounds[0][1]}]
+                [{center[0]-0.0008}, {center[1]-0.0008}],
+                [{center[0]-0.0008}, {center[1]+0.0008}],
+                [{center[0]+0.0008}, {center[1]+0.0008}],
+                [{center[0]+0.0008}, {center[1]-0.0008}]
             ],
             selected:true,
-            keepAspectRatio:false
-        }}).addTo(map);
+            keepAspectRatio:false,
+            opacity:{opacity}
+        }}).addTo(window.map);
         overlay.enable();
-        </script>
-        """
-        m.get_root().html.add_child(folium.Element(overlay_js))
+        """)
 
-    # ---------- Overlay SVG centrato sulla zoomata ----------
     if svg_file:
         svg_data = svg_file.read().decode()
         data_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
-        lat_center, lon_center = center
-        delta = 0.0008
-        bounds = [
-            [lat_center - delta, lon_center - delta],
-            [lat_center + delta, lon_center + delta]
-        ]
-        overlay_js = f"""
-        <script src="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.js"></script>
-        <script>
-        var map = window.map_{id(m)};
+        overlay_scripts.append(f"""
         var overlay = new L.DistortableImageOverlay("{data_url}", {{
             corners: [
-                [{bounds[0][0]}, {bounds[0][1]}],
-                [{bounds[0][0]}, {bounds[1][1]}],
-                [{bounds[1][0]}, {bounds[1][1]}],
-                [{bounds[1][0]}, {bounds[0][1]}]
+                [{center[0]-0.0008}, {center[1]-0.0008}],
+                [{center[0]-0.0008}, {center[1]+0.0008}],
+                [{center[0]+0.0008}, {center[1]+0.0008}],
+                [{center[0]+0.0008}, {center[1]-0.0008}]
             ],
             selected:true,
-            keepAspectRatio:false
-        }}).addTo(map);
+            keepAspectRatio:false,
+            opacity:{opacity}
+        }}).addTo(window.map);
         overlay.enable();
+        """)
+
+    if overlay_scripts:
+        m.get_root().html.add_child(folium.Element(f"""
+        <script src="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.js"></script>
+        <script>
+        var check_map_ready = setInterval(function(){{
+            if (window.map){{
+                {"".join(overlay_scripts)}
+                clearInterval(check_map_ready);
+            }}
+        }}, 100);
         </script>
-        """
-        m.get_root().html.add_child(folium.Element(overlay_js))
+        """))
 
     # ---------- Marker dinamici ----------
     for key, p in st.session_state.punti.items():
@@ -235,12 +229,14 @@ def run_map_manager():
             draggable=True
         ).add_to(m)
 
+    # ---------- Mostra mappa ----------
     map_res = st_folium(m, width="100%", height=600)
 
     if map_res and map_res.get("last_clicked"):
         st.session_state.click_lat = map_res["last_clicked"]["lat"]
         st.session_state.click_lon = map_res["last_clicked"]["lng"]
 
+    # ---------- Reset totale ----------
     if st.button("🗑️ Reset totale"):
         st.session_state.punti = {}
         st.session_state.anagrafica = {}
