@@ -30,8 +30,8 @@ def parse_web_name(web_name):
     clean_name = re.sub(r'\[.*?\]', '', web_name).strip()
     parts = clean_name.split()
 
-    dl = parts[0] if len(parts) > 0 else "Unknown"
-    full_sensor = parts[1] if len(parts) > 1 else "Unknown"
+    dl = parts[0] if len(parts) > 0 else "UNKNOWN_DL"
+    full_sensor = parts[1] if len(parts) > 1 else "UNKNOWN_SENSOR"
 
     sensor_parts = full_sensor.split('_')
 
@@ -41,6 +41,11 @@ def parse_web_name(web_name):
     else:
         sn = full_sensor
         param = "Dato"
+
+    if not dl:
+        dl = "UNKNOWN_DL"
+    if not sn:
+        sn = "UNKNOWN_SENSOR"
 
     return dl, sn, param, unit
 
@@ -65,6 +70,11 @@ def parse_excel_advanced(file):
         dl = dl_raw if dl_raw else dl_web
         sn = sn_raw if sn_raw else sn_web
 
+        if not dl:
+            dl = "UNKNOWN_DL"
+        if not sn:
+            sn = "UNKNOWN_SENSOR"
+
         try:
             lat = float(df.iloc[3, c]) if df.iloc[3, c] != "" else None
             lon = float(df.iloc[4, c]) if df.iloc[4, c] != "" else None
@@ -82,10 +92,10 @@ def parse_excel_advanced(file):
             }
 
         param_full = f"{param} [{unit}]"
+
         if param_full not in ana[dl][sn]["params"]:
             ana[dl][sn]["params"].append(param_full)
 
-        # FIX fondamentale
         if lat is not None and lon is not None:
             ana[dl][sn]["lat"] = lat
             ana[dl][sn]["lon"] = lon
@@ -117,7 +127,7 @@ def run_map_manager():
                 for sn, info in sensori.items():
                     key = f"{dl}|{sn}"
 
-                    if info["lat"] is not None and key not in st.session_state.punti:
+                    if info["lat"] is not None:
                         st.session_state.punti[key] = {
                             "dl": dl,
                             "sn": sn,
@@ -127,7 +137,7 @@ def run_map_manager():
                         }
 
             save_mac(st.session_state.punti)
-            st.success("Excel caricato")
+            st.success("Excel caricato correttamente")
 
         st.divider()
 
@@ -136,8 +146,8 @@ def run_map_manager():
         m_sn = st.text_input("Sensore")
 
         col1, col2 = st.columns(2)
-        m_lat = col1.number_input("Lat", value=st.session_state.get("click_lat", 45.0))
-        m_lon = col2.number_input("Lon", value=st.session_state.get("click_lon", 9.0))
+        m_lat = col1.number_input("Lat", value=st.session_state.get("click_lat", 45.4642))
+        m_lon = col2.number_input("Lon", value=st.session_state.get("click_lon", 9.1900))
 
         if st.button("➕ Aggiungi punto"):
             if m_dl and m_sn:
@@ -158,7 +168,7 @@ def run_map_manager():
         m_color = st.color_picker("Colore", "#0066ff")
         m_shape = st.selectbox("Forma", ["circle", "square", "triangle"])
 
-    # ---------- FILTRI ----------
+    # ---------- FILTRI ROBUSTI ----------
     sel_dl = None
     sel_sn = None
     sel_params = []
@@ -168,15 +178,30 @@ def run_map_manager():
 
         c1, c2, c3 = st.columns(3)
 
-        with c1:
-            sel_dl = st.selectbox("Datalogger", sorted(ana.keys()))
+        dl_list = sorted(ana.keys())
+        sel_dl = c1.selectbox("Datalogger", dl_list)
 
-        with c2:
-            sel_sn = st.selectbox("Sensore", sorted(ana[sel_dl].keys()))
+        if sel_dl not in ana:
+            st.stop()
 
-        with c3:
-            options = ana[sel_dl][sel_sn]["params"]
-            sel_params = st.multiselect("Parametri", options, default=options[:1])
+        sn_list = sorted(ana[sel_dl].keys())
+
+        if "sel_sn" not in st.session_state or st.session_state.sel_sn not in sn_list:
+            st.session_state.sel_sn = sn_list[0]
+
+        sel_sn = c2.selectbox("Sensore", sn_list, key="sel_sn")
+
+        if sel_sn not in ana[sel_dl]:
+            st.stop()
+
+        params_list = ana[sel_dl][sel_sn].get("params", [])
+
+        if params_list:
+            sel_params = c3.multiselect(
+                "Parametri",
+                params_list,
+                default=params_list[:1]
+            )
 
     # ---------- MAPPA ----------
     center = [45.4642, 9.1900]
@@ -195,7 +220,6 @@ def run_map_manager():
         dl = p["dl"]
         sn = p["sn"]
 
-        # FILTRI
         if sel_dl and dl != sel_dl:
             continue
         if sel_sn and sn != sel_sn:
@@ -240,10 +264,10 @@ def run_map_manager():
     if map_data and map_data.get("last_clicked"):
         st.session_state.click_lat = map_data["last_clicked"]["lat"]
         st.session_state.click_lon = map_data["last_clicked"]["lng"]
-        st.info(f"📍 Coordinate: {st.session_state.click_lat}, {st.session_state.click_lon}")
+        st.info(f"📍 Coordinate selezionate: {st.session_state.click_lat}, {st.session_state.click_lon}")
 
     # RESET
-    if st.button("🗑️ Reset tutto"):
+    if st.button("🗑️ Reset totale"):
         st.session_state.punti = {}
         save_mac({})
         st.rerun()
