@@ -14,7 +14,11 @@ def load_mac():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+                else:
+                    return {}
         except:
             return {}
     return {}
@@ -110,6 +114,9 @@ def run_map_manager():
 
     if 'punti' not in st.session_state:
         st.session_state.punti = load_mac()
+
+    if not isinstance(st.session_state.punti, dict):
+       st.session_state.punti = {}
 
     if 'anagrafica' not in st.session_state:
         st.session_state.anagrafica = {}
@@ -215,7 +222,7 @@ def run_map_manager():
     rotation = "transform: rotate(45deg);" if m_shape == "triangle" else ""
     border_rad = "50%" if m_shape == "circle" else "0%"
 
-    for key, p in st.session_state.punti.items():
+    for key, p in (st.session_state.punti or {}).items():
 
         dl = p["dl"]
         sn = p["sn"]
@@ -224,6 +231,16 @@ def run_map_manager():
             continue
         if sel_sn and sn != sel_sn:
             continue
+       for key, p in (st.session_state.punti or {}).items():
+
+       if not isinstance(p, dict):
+            continue
+
+       if "lat" not in p or "lon" not in p:
+            continue
+
+    dl = p.get("dl", "ND")
+    sn = p.get("sn", "ND")
 
         params = p.get("params", [])
 
