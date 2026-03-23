@@ -9,10 +9,11 @@ import re
 from PIL import Image
 import base64
 import io
+import math
 
 CONFIG_FILE = "mac_positions.json"
 
-# ----------------- UTILS (RIPRISTINATE) -----------------
+# ----------------- UTILS -----------------
 def load_mac():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -71,20 +72,29 @@ def img_to_data_url(img):
     encoded = base64.b64encode(buffer.getvalue()).decode()
     return f"data:image/png;base64,{encoded}"
 
+def get_rotated_corners(center_lat, center_lon, width_m, height_m, rotation_deg):
+    deg_lat = height_m / 111132.0
+    deg_lon = width_m / (111132.0 * math.cos(math.radians(center_lat)))
+    angle = math.radians(rotation_deg)
+    corners = []
+    for dx, dy in [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]:
+        rx = dx * deg_lon * math.cos(angle) - dy * deg_lat * math.sin(angle)
+        ry = dx * deg_lon * math.sin(angle) + dy * deg_lat * math.cos(angle)
+        corners.append([center_lat + ry, center_lon + rx])
+    return corners
+
 # ----------------- MAIN -----------------
 def run_map_manager():
     st.set_page_config(layout="wide", page_title="Monitoraggio MAC")
     st.title("🌍 Monitoraggio Sensori Georeferenziati con Overlay")
 
-    # ---------- SESSION STATE (RIPRISTINATO) ----------
-    if 'punti' not in st.session_state or not isinstance(st.session_state.punti, dict):
-        st.session_state.punti = load_mac()
-    if 'anagrafica' not in st.session_state:
-        st.session_state.anagrafica = {}
-    if 'overlay' not in st.session_state:
-        st.session_state.overlay = {"img_file": None, "corners": None, "locked": False, "opacity": 0.5}
+    # ---------- SESSION STATE ----------
+    if 'punti' not in st.session_state: st.session_state.punti = load_mac()
+    if 'anagrafica' not in st.session_state: st.session_state.anagrafica = {}
+    if 'img_params' not in st.session_state:
+        st.session_state.img_params = {"w": 100, "h": 100, "rot": 0, "off_x": 0, "off_y": 0, "opacity": 0.5}
 
-    # ---------- BARRA SUPERIORE (RIPRISTINATA) ----------
+    # ---------- BARRA SUPERIORE ----------
     with st.expander("📂 Carica / Inserimento / Overlay", expanded=True):
         c1, c2, c3 = st.columns([2,1,1])
         with c1:
@@ -105,12 +115,11 @@ def run_map_manager():
 
             m_dl = st.text_input("Datalogger", key="manual_dl")
             m_sn = st.text_input("Sensore", key="manual_sn")
-            m_lat = st.number_input("Lat", value=st.session_state.get("click_lat", 45.4642), format="%.6f", key="manual_lat")
-            m_lon = st.number_input("Lon", value=st.session_state.get("click_lon", 9.1900), format="%.6f", key="manual_lon")
+            m_lat = st.number_input("Lat", value=st.session_state.get("click_lat", 45.4642), format="%.6f")
+            m_lon = st.number_input("Lon", value=st.session_state.get("click_lon", 9.1900), format="%.6f")
             if st.button("➕ Aggiungi punto"):
                 if m_dl and m_sn:
-                    key = f"{m_dl}|{m_sn}"
-                    st.session_state.punti[key] = {
+                    st.session_state.punti[f"{m_dl}|{m_sn}"] = {
                         "dl": m_dl, "sn": m_sn, "lat": m_lat, "lon": m_lon,
                         "params": [], "color": "#0066ff", "shape": "circle"
                     }
@@ -118,21 +127,18 @@ def run_map_manager():
                     st.rerun()
 
         with c2:
-            m_color = st.color_picker("Colore predefinito", "#0066ff", key="color_picker")
-            m_shape = st.selectbox("Forma predefinita", ["circle","square","triangle"], key="shape_picker")
+            m_color = st.color_picker("Colore predefinito", "#0066ff")
+            m_shape = st.selectbox("Forma predefinita", ["circle","square","triangle"])
 
         with c3:
-            uploaded_img = st.file_uploader("Carica Planimetria (PNG/JPG)", type=['png','jpg','jpeg'], key="img_up")
+            uploaded_img = st.file_uploader("Carica Planimetria (PNG/JPG)", type=['png','jpg','jpeg'])
             if uploaded_img:
-                st.session_state.overlay["img_file"] = uploaded_img
-            
-            overlay_opacity = st.slider("Trasparenza", 0.0, 1.0, st.session_state.overlay["opacity"])
-            st.session_state.overlay["opacity"] = overlay_opacity
-            
-            locked = st.checkbox("🔒 Blocca overlay", value=st.session_state.overlay["locked"])
-            st.session_state.overlay["locked"] = locked
+                st.session_state.img_params["w"] = st.number_input("Larghezza (m)", 1, 5000, st.session_state.img_params["w"])
+                st.session_state.img_params["h"] = st.number_input("Altezza (m)", 1, 5000, st.session_state.img_params["h"])
+                st.session_state.img_params["rot"] = st.slider("Rotazione (°)", 0, 360, st.session_state.img_params["rot"])
+                st.session_state.img_params["opacity"] = st.slider("Trasparenza", 0.0, 1.0, st.session_state.img_params["opacity"])
 
-    # ---------- FILTRI (RIPRISTINATI) ----------
+    # ---------- FILTRI ----------
     sel_dl, sel_sn, sel_params = None, None, []
     if st.session_state.anagrafica:
         ana = st.session_state.anagrafica
@@ -145,89 +151,71 @@ def run_map_manager():
             sel_params = c3f.multiselect("Visualizza Parametri", params_list, default=params_list[:1])
 
     # ---------- MAPPA ----------
-    center = [45.4642, 9.1900]
+    center = [43.5991, 3.5110]
     if st.session_state.punti:
         last = list(st.session_state.punti.values())[-1]
         center = [last["lat"], last["lon"]]
 
-    m = folium.Map(location=center, zoom_start=18)
+    m = folium.Map(location=center, zoom_start=19)
 
-    # Iniezione LIBRERIE NECESSARIE per far apparire l'immagine
+    # Iniezione CSS/JS per l'overlay
     m.get_root().html.add_child(folium.Element("""
         <link rel="stylesheet" href="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.css">
         <script src="https://unpkg.com/leaflet-distortableimage@0.15.0/dist/leaflet.distortableimage.min.js"></script>
     """))
 
-    # ---------- OVERLAY (IMPLEMENTATO SU TUO CODICE) ----------
-    if st.session_state.overlay["img_file"]:
-        img = Image.open(st.session_state.overlay["img_file"])
+    # Gestione Overlay Planimetria
+    if uploaded_img:
+        img = Image.open(uploaded_img)
         data_url = img_to_data_url(img)
+        corners = get_rotated_corners(center[0], center[1], st.session_state.img_params["w"], st.session_state.img_params["h"], st.session_state.img_params["rot"])
         
-        # Se i corners non esistono, li creiamo intorno al centro
-        if st.session_state.overlay["corners"] is None:
-            d = 0.0005
-            st.session_state.overlay["corners"] = [
-                [center[0]-d, center[1]-d], [center[0]-d, center[1]+d],
-                [center[0]+d, center[1]+d], [center[0]+d, center[1]-d]
-            ]
-        
-        corners = st.session_state.overlay["corners"]
-        locked_js = "true" if st.session_state.overlay["locked"] else "false"
-
-        overlay_script = f"""
+        overlay_js = f"""
         <script>
-        var checkMap = setInterval(function() {{
+        var interval = setInterval(function() {{
             if (window.map) {{
-                var img_overlay = new L.DistortableImageOverlay("{data_url}", {{
+                var img = new L.DistortableImageOverlay("{data_url}", {{
                     corners: [
-                        L.latLng({corners[0][0]}, {corners[0][1]}),
-                        L.latLng({corners[1][0]}, {corners[1][1]}),
-                        L.latLng({corners[2][0]}, {corners[2][1]}),
-                        L.latLng({corners[3][0]}, {corners[3][1]})
+                        L.latLng({corners[0][0]}, {corners[0][1]}), L.latLng({corners[1][0]}, {corners[1][1]}),
+                        L.latLng({corners[2][0]}, {corners[2][1]}), L.latLng({corners[3][0]}, {corners[3][1]})
                     ],
-                    selected: true,
-                    opacity: {st.session_state.overlay['opacity']},
-                    editable: !{locked_js}
+                    opacity: {st.session_state.img_params["opacity"]},
+                    editable: true
                 }}).addTo(window.map);
-                
-                if (!{locked_js}) {{ img_overlay.enable(); }}
-                clearInterval(checkMap);
+                clearInterval(interval);
             }}
-        }}, 100);
+        }}, 200);
         </script>
         """
-        m.get_root().html.add_child(folium.Element(overlay_script))
+        m.get_root().html.add_child(folium.Element(overlay_js))
 
-    # ---------- MARKER DINAMICI (RIPRISTINATI) ----------
+    # ---------- MARKER DINAMICI ----------
     for key, p in st.session_state.punti.items():
         if sel_dl and sel_dl != "Tutti" and p["dl"] != sel_dl: continue
         if sel_sn and sel_sn != "Tutti" and p["sn"] != sel_sn: continue
         
         color = p.get("color", m_color)
         shape = p.get("shape", m_shape)
-        rot = "transform: rotate(45deg);" if shape=="triangle" else ""
+        rot_style = "transform: rotate(45deg);" if shape=="triangle" else ""
         rad = "50%" if shape=="circle" else "0%"
         
         folium.Marker(
             [p["lat"], p["lon"]],
             icon=DivIcon(icon_size=(40,40), icon_anchor=(20,20),
-                         html=f"<div style='background-color:{color}; border:2px solid white; border-radius:{rad}; width:35px; height:35px; display:flex; align-items:center; justify-content:center; color:white; font-size:9px; font-weight:bold; {rot}'>{p['sn'][:5]}</div>"),
-            popup=folium.Popup(f"<b>{p['dl']}</b><br>{p['sn']}", max_width=200)
+                         html=f"<div style='background-color:{color}; border:2px solid white; border-radius:{rad}; width:35px; height:35px; display:flex; align-items:center; justify-content:center; color:white; font-size:9px; font-weight:bold; {rot_style}'>{p['sn'][:5]}</div>"),
+            popup=folium.Popup(f"<b>{p['dl']}</b><br>{p['sn']}<br>{'<br>'.join([pr for pr in p['params'] if not sel_params or pr in sel_params])}", max_width=200)
         ).add_to(m)
 
-    # Rendering
     map_res = st_folium(m, width="100%", height=650)
 
-    # Cattura Click
     if map_res and map_res.get("last_clicked"):
         st.session_state.click_lat = map_res["last_clicked"]["lat"]
         st.session_state.click_lon = map_res["last_clicked"]["lng"]
 
-    # Reset (Ripristinato)
     if st.button("🗑️ Reset totale"):
         st.session_state.punti = {}
         st.session_state.anagrafica = {}
-        st.session_state.overlay = {"img_file": None, "corners": None, "locked": False, "opacity": 0.5}
+        st.session_state.img_params = {"w": 100, "h": 100, "rot": 0, "off_x": 0, "off_y": 0, "opacity": 0.5}
         if os.path.exists(CONFIG_FILE): os.remove(CONFIG_FILE)
         st.rerun()
 
