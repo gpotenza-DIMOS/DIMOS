@@ -1,104 +1,110 @@
-# main_app.py
 import streamlit as st
-import os
+import serial
+import serial.tools.list_ports
+import time
+import math
+import re
 
-# Configurazione pagina
-st.set_page_config(page_title="DIMOS", layout="wide", initial_sidebar_state="expanded")
+def calculate_lrc(command):
+    """Calcola il Checksum LRC richiesto dal protocollo Sokkia Standard"""
+    lrc = 0
+    for char in command:
+        lrc = lrc ^ ord(char)
+    return f"{lrc:02X}"
 
-# CSS integrale
-st.markdown("""
-    <style>
-        [data-testid="stSidebarContent"] { background-color: #1a1c23 !important; padding-top: 0px !important; }
-        [data-testid="stSidebarContent"] .stText, [data-testid="stSidebarContent"] label, 
-        [data-testid="stSidebarContent"] h1, [data-testid="stSidebarContent"] h2, 
-        [data-testid="stSidebarContent"] h3, [data-testid="stSidebarContent"] p { color: #e0e0e0 !important; }
-        div.stButton > button {
-            width: 100% !important; background-color: #2d303d !important; color: #ffffff !important;
-            border: 1px solid #58607e !important; border-radius: 0px !important;
-            text-align: left !important; padding: 15px 20px !important; margin: 0px !important;
-        }
-        div.stButton > button:hover { border-left: 8px solid #ff4b4b !important; background-color: #54533e !important; }
-        header { visibility: hidden; }
-        .block-container { padding-top: 0rem !important; }
-    </style>
-    """, unsafe_allow_html=True)
+class SokkiaStandardController:
+    def __init__(self, port, baudrate=38400):
+        self.port = port
+        self.baudrate = baudrate
+        self.ser = None
+        self.connect()
 
-# --- Autenticazione ---
-if "auth" not in st.session_state:
-    st.session_state["auth"] = False
+    def connect(self):
+        try:
+            # Pulizia preventiva della porta
+            self.ser = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                bytesize=serial.EIGHTBITS,
+                timeout=2
+            )
+            # Invia ACK iniziale per svegliare lo strumento
+            self.ser.write(b"\x06") 
+            st.success(f"✅ Connesso a {self.port} (Modalità Standard)")
+        except Exception as e:
+            st.error(f"Errore di connessione: {e}")
 
-if not st.session_state["auth"]:
-    _, col_login, _ = st.columns([1,1,1])
-    with col_login:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        if os.path.exists("logo_dimos.jpg"): st.image("logo_dimos.jpg")
-        with st.container(border=True):
-            u = st.text_input("ID")
-            p = st.text_input("Password", type="password")
-            if st.button("ACCEDI"):
-                if u == "asdf" and p == "asdf":
-                    st.session_state["auth"] = True
-                    st.rerun()
-                else:
-                    st.error("Credenziali Errate")
-    st.stop()
+    def send_cmd(self, cmd_body):
+        """Invia comando nel formato: [STX] 00 [CMD] [ETX] [LRC] [CRLF]"""
+        payload = f"00{cmd_body}\x03" # ETX è \x03
+        lrc = calculate_lrc(payload)
+        full_msg = f"\x02{payload}{lrc}\r\n".encode('ascii') # STX è \x02
+        
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.write(full_msg)
+            time.sleep(0.5)
+            
+            # Legge la risposta
+            response = self.ser.readline().decode('ascii', errors='ignore').strip()
+            
+            # Se lo strumento risponde con ACK (carattere 06), confermiamo
+            if response.startswith('\x06'):
+                self.ser.write(b"\x06") # Conferma ricezione
+            
+            return response
+        except Exception as e:
+            return f"Errore: {e}"
 
-# --- SIDEBAR ---
+    def parse_data(self, raw, hi, hp):
+        # Estrae i valori numerici dalla stringa complessa
+        matches = re.findall(r'[+-]\d+', raw)
+        if len(matches) < 3: return None
+        try:
+            hz = float(matches[0]) / 100000
+            v = float(matches[1]) / 100000
+            sd = float(matches[2]) / 1000
+            
+            hz_rad, v_rad = math.radians(hz), math.radians(v)
+            hd = sd * math.sin(v_rad)
+            dN = hd * math.cos(hz_rad)
+            dE = hd * math.sin(hz_rad)
+            dZ = (sd * math.cos(v_rad)) + hi - hp
+            
+            return {"Hz": hz, "V": v, "SD": sd, "dN": dN, "dE": dE, "dZ": dZ}
+        except: return None
+
+# --- INTERFACCIA ---
+st.set_page_config(page_title="Sokkia iX Bridge", layout="wide")
+st.title("🛰️ Sokkia iX-1200 - Protocollo Polifemo")
+
 with st.sidebar:
-    if os.path.exists("logo_microgeo.jpg"):
-        st.image("logo_microgeo.jpg", use_container_width=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🏠 DASHBOARD"): st.session_state["page"] = "home"
-    if st.button("📈 ANALISI GRAFICA"): st.session_state["page"] = "pl"
-    if st.button("📍 MAPPE"): st.session_state["page"] = "map"
-    if st.button("📏 ELETTROLIVELLE"): st.session_state["page"] = "el"
-    if st.button("🛰 TPS MONITORING"): st.session_state["page"] = "tps"
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    if st.button("🚪 LOGOUT"):
-        st.session_state["auth"] = False
-        st.rerun()
+    c_port = st.text_input("Porta COM", value="COM11")
+    c_baud = st.selectbox("Baud Rate", [9600, 19200, 38400, 115200], index=2)
+    h_i = st.number_input("Altezza Strumento (m)", value=1.500, format="%.3f")
+    h_p = st.number_input("Altezza Prisma (m)", value=1.500, format="%.3f")
+    if st.button("🔌 CONNETTI"):
+        st.session_state.controller = SokkiaStandardController(c_port, c_baud)
 
-pg = st.session_state.get("page", "home")
+if "controller" in st.session_state:
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📏 ESEGUI MISURA"):
+            # Comando 'M' (Measure) seguito da 'D' (Data)
+            st.session_state.controller.send_cmd("M")
+            time.sleep(1)
+            raw = st.session_state.controller.send_cmd("D")
+            res = st.session_state.controller.parse_data(raw, h_i, h_p)
+            if res:
+                st.write("### Risultati Calcolati")
+                st.json(res)
+            else:
+                st.warning(f"Dati grezzi ricevuti: {raw}")
 
-# --- PAGINE ---
-if pg == "home":
-    st.title("Piattaforma Integrata DIMOS")
-    st.divider()
-    col_img1, col_img2 = st.columns([1, 4])
-    with col_img1:
-        if os.path.exists("logo_DIMOScircle.jpg"):
-            st.image("logo_DIMOScircle.jpg", width=250)
-    with col_img2:
-        if os.path.exists("montita.jpg"):
-            st.image("montita.jpg", width=400)
-    st.markdown("<br>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        with st.container(border=True):
-            st.markdown("#### Grafici e Report")
-            if st.button("Vai a GRAFICI", key="btn_pl"): st.session_state["page"] = "pl"; st.rerun()
-    with c2:
-        with st.container(border=True):
-            st.markdown("#### Mappa Sensori")
-            if st.button("Vai a MAPPA", key="btn_map"): st.session_state["page"] = "map"; st.rerun()
-    with c3:
-        with st.container(border=True):
-            st.markdown("#### Elettrolivelle")
-            if st.button("Vai a ELETTROLIVELLE", key="btn_el"): st.session_state["page"] = "el"; st.rerun()
-
-elif pg == "pl":
-    import plotter_mod
-    plotter_mod.run_plotter()
-
-elif pg == "map":
-    import map_module
-    map_module.run_map_manager()
-
-elif pg == "el":
-    import elettrolivelle_mod
-    elettrolivelle_mod.run_elettrolivelle()
-
-elif pg == "tps":
-    # --- TPS Monitoring ---
-    import TPS_mod
-    TPS_mod.run_tps_monitoring()
+    with col2:
+        if st.button("💡 LASER ON"):
+            st.session_state.controller.send_cmd("L1")
+        if st.button("🌑 LASER OFF"):
+            st.session_state.controller.send_cmd("L0")
