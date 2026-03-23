@@ -144,7 +144,7 @@ def run_map_manager():
             sel_params = c3f.multiselect("Visualizza Parametri", params_list, default=params_list[:1])
 
     # ---------- MAPPA ----------
-    center = [45.4642, 9.1900]
+    center = [43.610601, 13.436571]
     if st.session_state.punti:
         last = list(st.session_state.punti.values())[-1]
         center = [last["lat"], last["lon"]]
