@@ -1,238 +1,130 @@
-import streamlit as st 
-import pandas as pd
-import json
-import os
+import streamlit as st
 import folium
 from folium.features import DivIcon
 from streamlit_folium import st_folium
+import json, os
+import pandas as pd
 import re
 from PIL import Image
 import numpy as np
+import rasterio
+import shapely.geometry as geom
+import ezdxf
 
 CONFIG_FILE = "mac_positions.json"
 
-# ----------------- UTILS -----------------
+# ---------------- UTILS ----------------
 def load_mac():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
+                return json.load(f)
         except:
             return {}
     return {}
 
 def save_mac(data):
-    with open(CONFIG_FILE, "w") as f:
+    with open(CONFIG_FILE,"w") as f:
         json.dump(data, f, indent=4)
 
-def parse_web_name(web_name):
-    unit = re.findall(r'\[(.*?)\]', web_name)
-    unit = unit[0] if unit else ""
-    clean_name = re.sub(r'\[.*?\]', '', web_name).strip()
-    parts = clean_name.split()
-    dl = parts[0] if len(parts) > 0 else "UNKNOWN_DL"
-    full_sensor = parts[1] if len(parts) > 1 else "UNKNOWN_SENSOR"
-    sensor_parts = full_sensor.split('_')
-    if len(sensor_parts) > 2:
-        sn = "_".join(sensor_parts[:-1])
-        param = sensor_parts[-1]
-    else:
-        sn = full_sensor
-        param = "Dato"
-    return dl, sn, param, unit
+def parse_web_name(web):
+    parts = re.sub(r"\[.*?\]","",web).split()
+    dl = parts[0] if len(parts)>0 else "UNKNOWN"
+    sn = parts[1] if len(parts)>1 else "UNKNOWN"
+    return dl, sn
 
-def parse_excel_advanced(file):
-    xls = pd.ExcelFile(file)
-    df = pd.read_excel(
-        xls, sheet_name="NAME" if "NAME" in xls.sheet_names else 0, header=None
-    ).fillna("")
-    ana = {}
-    for c in range(1, df.shape[1]):
-        dl_raw = str(df.iloc[0, c]).strip()
-        sn_raw = str(df.iloc[1, c]).strip()
-        web_name = str(df.iloc[2, c]).strip()
-        dl_web, sn_web, param, unit = parse_web_name(web_name)
-        dl = dl_raw if dl_raw else dl_web
-        sn = sn_raw if sn_raw else sn_web
-        try:
-            lat = float(df.iloc[3, c]) if df.iloc[3, c] != "" else None
-            lon = float(df.iloc[4, c]) if df.iloc[4, c] != "" else None
-        except:
-            lat, lon = None, None
-        if dl not in ana: ana[dl] = {}
-        if sn not in ana[dl]:
-            ana[dl][sn] = {"lat": lat, "lon": lon, "params": []}
-        param_full = f"{param} [{unit}]"
-        if param_full not in ana[dl][sn]["params"]:
-            ana[dl][sn]["params"].append(param_full)
-    return ana
+# -------------- APP -----------------
+def run_app():
 
-# ----------------- MAIN -----------------
-def run_map_manager():
-    st.set_page_config(layout="wide", page_title="Monitoraggio MAC")
-    st.title("🌍 Monitoraggio Sensori Georeferenziati")
+    st.set_page_config(layout="wide")
+    st.title("📍 Visualizzatore Mappe, Immagini, GeoTIFF, CAD")
 
-    # ---------- INIZIALIZZAZIONE SESSION_STATE ----------
-    if 'punti' not in st.session_state or not isinstance(st.session_state.punti, dict):
+    if 'punti' not in st.session_state:
         st.session_state.punti = load_mac()
-        if not isinstance(st.session_state.punti, dict):
+
+    # setup input
+    with st.sidebar:
+        st.header("📥 Carica File")
+
+        img_file = st.file_uploader("Immagine (JPG/PNG)", type=["jpg","jpeg","png"])
+        geotiff_file = st.file_uploader("Geotiff", type=["tif","tiff"])
+        dxf_file = st.file_uploader("CAD (DWG/DXF/SVG)", type=["dxf","dwg","svg"])
+
+        if st.button("🔄 Reset TUTTO"):
             st.session_state.punti = {}
+            if os.path.exists(CONFIG_FILE):
+                os.remove(CONFIG_FILE)
+            st.experimental_rerun()
 
-    if 'anagrafica' not in st.session_state or not isinstance(st.session_state.anagrafica, dict):
-        st.session_state.anagrafica = {}
-
-    if 'overlay_image' not in st.session_state:
-        st.session_state.overlay_image = None
-        st.session_state.overlay_bounds = None
-        st.session_state.overlay_opacity = 0.5
-
-    # ---------- SETUP SOPRA MAPPA ----------
-    with st.container():
-        st.subheader("📂 Carica Excel / Inserimento manuale / Marker / Overlay")
-        c1, c2 = st.columns([2,1])
-
-        with c1:
-            file_input = st.file_uploader("Carica file Excel", type=['xlsx','xlsm'])
-            if file_input:
-                ana = parse_excel_advanced(file_input)
-                st.session_state.anagrafica = ana
-                for dl, sensori in ana.items():
-                    for sn, info in sensori.items():
-                        key = f"{dl}|{sn}"
-                        if info["lat"] is not None and info["lon"] is not None:
-                            st.session_state.punti[key] = {
-                                "dl": dl, "sn": sn, "lat": info["lat"], "lon": info["lon"],
-                                "params": info["params"], "color": "#0066ff", "shape": "circle"
-                            }
-                save_mac(st.session_state.punti)
-                st.success("Excel caricato!")
-
-            st.markdown("### Inserimento manuale")
-            m_dl = st.text_input("Datalogger")
-            m_sn = st.text_input("Sensore")
-            c_lat, c_lon = st.columns(2)
-            m_lat = c_lat.number_input(
-                "Lat", value=st.session_state.get("click_lat", 45.4642), format="%.6f"
-            )
-            m_lon = c_lon.number_input(
-                "Lon", value=st.session_state.get("click_lon", 9.1900), format="%.6f"
-            )
-
-            if st.button("➕ Aggiungi punto"):
-                if m_dl and m_sn:
-                    key = f"{m_dl}|{m_sn}"
-                    st.session_state.punti[key] = {
-                        "dl": m_dl, "sn": m_sn, "lat": m_lat, "lon": m_lon,
-                        "params": [], "color": "#0066ff", "shape": "circle"
-                    }
-                    save_mac(st.session_state.punti)
-                    st.experimental_rerun()
-
-        with c2:
-            st.markdown("### Marker predefiniti")
-            m_color = st.color_picker("Colore predefinito", "#0066ff")
-            m_shape = st.selectbox("Forma predefinita", ["circle", "square", "triangle"])
-            st.markdown("### Overlay immagine")
-            img_file = st.file_uploader("Carica immagine georeferenziata", type=['png','jpg','jpeg'])
-            if img_file:
-                img = Image.open(img_file)
-                st.session_state.overlay_image = np.array(img)
-                st.session_state.overlay_bounds = [[45.4635, 9.1895], [45.4649, 9.1905]]
-                st.session_state.overlay_opacity = st.slider("Trasparenza", 0.0, 1.0, 0.5)
-                st.success("Overlay caricato!")
-
-    # ---------- FILTRI ----------
-    sel_dl, sel_sn, sel_params = None, None, []
-    if st.session_state.anagrafica:
-        ana = st.session_state.anagrafica
-        c1f, c2f, c3f = st.columns(3)
-        sel_dl = c1f.selectbox("Filtra Datalogger", ["Tutti"] + sorted(ana.keys()))
-        
-        relevant_sensors = []
-        if sel_dl != "Tutti":
-            relevant_sensors = sorted(ana[sel_dl].keys())
-        else:
-            for d in ana: relevant_sensors.extend(ana[d].keys())
-            relevant_sensors = sorted(list(set(relevant_sensors)))
-
-        sel_sn = c2f.selectbox("Filtra Sensore", ["Tutti"] + relevant_sensors)
-        
-        if sel_dl != "Tutti" and sel_sn != "Tutti":
-            params_list = ana[sel_dl][sel_sn].get("params", [])
-            sel_params = c3f.multiselect("Visualizza Parametri", params_list, default=params_list[:1])
-
-    # ---------- MAPPA ----------
-    center = [45.4642, 9.1900]
-    if st.session_state.punti and len(st.session_state.punti) > 0:
-        last = list(st.session_state.punti.values())[-1]
-        center = [last["lat"], last["lon"]]
-
+    # ---------------- MAPPA ----------------
+    center=[45.4642, 9.1900]
     m = folium.Map(location=center, zoom_start=17)
 
-    # Overlay immagine
-    if st.session_state.overlay_image is not None and st.session_state.overlay_bounds:
+    #### Image Overlay JPG/PNG
+    if img_file:
+        img = Image.open(img_file)
+        arr = np.array(img)
+        bounds = st.slider("Modifica Bounding Box Immagine",
+                          value=((45.4635,9.1895),(45.4650,9.1910)))
         folium.raster_layers.ImageOverlay(
-            image=st.session_state.overlay_image,
-            bounds=st.session_state.overlay_bounds,
-            opacity=st.session_state.overlay_opacity,
-            interactive=True,
-            cross_origin=False,
-            zindex=1
+            image=arr,
+            bounds=bounds,
+            opacity=st.slider("Trasparenza Immagine",0.0,1.0,0.6)
         ).add_to(m)
+        st.info(f"Overlay immagine caricata: bounding {bounds}")
 
-    # Marker
-    for key, p in st.session_state.punti.items():
-        d_p, s_p = p["dl"], p["sn"]
-        if sel_dl and sel_dl != "Tutti" and d_p != sel_dl: continue
-        if sel_sn and sel_sn != "Tutti" and s_p != sel_sn: continue
+    #### Geotiff
+    if geotiff_file:
+        with rasterio.open(geotiff_file) as src:
+            img = src.read()  # bands
+            bounds = src.bounds
+            box = [[bounds.bottom,bounds.left],[bounds.top,bounds.right]]
+            img = np.transpose(img, (1,2,0))
+            folium.raster_layers.ImageOverlay(
+                image=img,
+                bounds=box,
+                opacity=st.slider("Trasparenza GeoTIFF", 0.0,1.0,0.7)
+            ).add_to(m)
+        st.success("GeoTIFF visualizzato")
 
-        color = p.get("color", m_color)
-        shape = p.get("shape", m_shape)
-        rot = "transform: rotate(45deg);" if shape == "triangle" else ""
-        rad = "50%" if shape == "circle" else "0%"
+    #### CAD DXF
+    if dxf_file:
+        ext = dxf_file.name.split(".")[-1].lower()
+        if ext in ["dxf","dwg"]:
+            try:
+                doc = ezdxf.readfile(dxf_file)
+                msp = doc.modelspace()
+                for line in msp.query("LINE"):
+                    start = (line.dxf.start.y, line.dxf.start.x)
+                    end = (line.dxf.end.y, line.dxf.end.x)
+                    folium.PolyLine([start,end],color="blue").add_to(m)
+                st.success("CAD DXF visualizzato come linee")
+            except Exception as e:
+                st.error(f"Errore lettura DXF/DWG: {e}")
+        elif ext=="svg":
+            svg_data = dxf_file.read().decode()
+            folium.raster_layers.ImageOverlay(
+                image=svg_data,
+                bounds=st.slider("Bounding SVG",((45.4635,9.1895),(45.4650,9.1910))),
+                opacity=st.slider("Trasparenza SVG",0.0,1.0,0.6)
+            ).add_to(m)
+            st.success("SVG visualizzato")
 
-        # Popup live con form per modificare marker
-        popup_content = f"""
-        <b>{d_p} - {s_p}</b><br>
-        <b>Parametri:</b><br>{"<br>".join([par for par in p.get("params", []) if not sel_params or par in sel_params])}<br><br>
-        Lat: <input type='number' value='{p['lat']}' id='lat_{key}'><br>
-        Lon: <input type='number' value='{p['lon']}' id='lon_{key}'><br>
-        Colore: <input type='color' value='{color}' id='color_{key}'><br>
-        Forma: 
-        <select id='shape_{key}'>
-            <option value='circle' {"selected" if shape=="circle" else ""}>Cerchio</option>
-            <option value='square' {"selected" if shape=="square" else ""}>Quadrato</option>
-            <option value='triangle' {"selected" if shape=="triangle" else ""}>Triangolo</option>
-        </select><br>
-        """
+    # ---- Marker su Mappa ----
+    for k,p in st.session_state.punti.items():
+        folium.Marker([p["lat"],p["lon"]],tooltip=p["label"]).add_to(m)
 
-        folium.Marker(
-            [p["lat"], p["lon"]],
-            icon=DivIcon(
-                icon_size=(40,40), icon_anchor=(20,20),
-                html=f"<div style='background-color:{color}; border:2px solid white; border-radius:{rad}; width:40px; height:40px; display:flex; align-items:center; justify-content:center; color:white; font-size:9px; font-weight:bold; {rot}'>{s_p[:5]}</div>"
-            ),
-            tooltip=f"{d_p} - {s_p}",
-            popup=folium.Popup(popup_content, max_width=300),
-            draggable=True
-        ).add_to(m)
+    # render
+    st_data = st_folium(m, width="100%",height=700)
 
-    map_res = st_folium(m, width="100%", height=600)
+    if st_data.get("last_clicked"):
+        lat = st_data["last_clicked"]["lat"]
+        lon = st_data["last_clicked"]["lng"]
+        st.session_state.punti[f"Punto_{len(st.session_state.punti)+1}"]={
+            "lat":lat,"lon":lon,"label":f"{lat:.5f},{lon:.5f}"
+        }
+        save_mac(st.session_state.punti)
+        st.success(f"Aggiunto marker in {lat:.5f},{lon:.5f}")
 
-    # Aggiornamento ultima posizione click
-    if map_res and map_res.get("last_clicked"):
-        st.session_state.click_lat = map_res["last_clicked"]["lat"]
-        st.session_state.click_lon = map_res["last_clicked"]["lng"]
-
-    # Reset totale
-    if st.button("🗑️ Reset totale"):
-        st.session_state.punti = {}
-        st.session_state.anagrafica = {}
-        st.session_state.overlay_image = None
-        if os.path.exists(CONFIG_FILE): os.remove(CONFIG_FILE)
-        st.experimental_rerun()
-
-
-if __name__ == "__main__":
-    run_map_manager()
+if __name__=="__main__":
+    run_app()
