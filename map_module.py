@@ -1,15 +1,13 @@
 import streamlit as st
 import folium
-from folium.features import DivIcon
+from folium.plugins import Draw
 from streamlit_folium import st_folium
-import json, os
-import pandas as pd
-import re
 from PIL import Image
 import numpy as np
-import rasterio
-import shapely.geometry as geom
-import ezdxf
+import tifffile
+import json
+import base64
+import os
 
 CONFIG_FILE = "mac_positions.json"
 
@@ -27,102 +25,145 @@ def save_mac(data):
     with open(CONFIG_FILE,"w") as f:
         json.dump(data, f, indent=4)
 
-def parse_web_name(web):
-    parts = re.sub(r"\[.*?\]","",web).split()
-    dl = parts[0] if len(parts)>0 else "UNKNOWN"
-    sn = parts[1] if len(parts)>1 else "UNKNOWN"
-    return dl, sn
+def img_to_data_url(img):
+    """Convert PIL image to base64 data URL for folium overlay"""
+    from io import BytesIO
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode()
+    return f"data:image/png;base64,{encoded}"
 
-# -------------- APP -----------------
+# ---------------- APP -----------------
 def run_app():
 
     st.set_page_config(layout="wide")
-    st.title("📍 Visualizzatore Mappe, Immagini, GeoTIFF, CAD")
+    st.title("📍 GIS Avanzato: Mappe, Immagini, GeoTIFF, CAD/SVG")
 
+    # ---------- SESSION STATE ----------
     if 'punti' not in st.session_state:
         st.session_state.punti = load_mac()
+    if 'overlays' not in st.session_state:
+        st.session_state.overlays = []
 
-    # setup input
+    # ---------- SIDEBAR ----------
     with st.sidebar:
         st.header("📥 Carica File")
-
-        img_file = st.file_uploader("Immagine (JPG/PNG)", type=["jpg","jpeg","png"])
-        geotiff_file = st.file_uploader("Geotiff", type=["tif","tiff"])
-        dxf_file = st.file_uploader("CAD (DWG/DXF/SVG)", type=["dxf","dwg","svg"])
-
-        if st.button("🔄 Reset TUTTO"):
+        img_file = st.file_uploader("Immagine (PNG/JPG)", type=["png","jpg","jpeg"])
+        geotiff_file = st.file_uploader("GeoTIFF", type=["tif","tiff"])
+        svg_file = st.file_uploader("SVG / DXF convertito", type=["svg"])
+        if st.button("🔄 Reset Tutto"):
             st.session_state.punti = {}
+            st.session_state.overlays = []
             if os.path.exists(CONFIG_FILE):
                 os.remove(CONFIG_FILE)
             st.experimental_rerun()
 
-    # ---------------- MAPPA ----------------
-    center=[45.4642, 9.1900]
+    # ---------- MAPPA ----------
+    center = [45.4642, 9.1900]
     m = folium.Map(location=center, zoom_start=17)
 
-    #### Image Overlay JPG/PNG
+    # ---------- OVERLAY IMMAGINI PNG/JPG ----------
     if img_file:
         img = Image.open(img_file)
-        arr = np.array(img)
-        bounds = st.slider("Modifica Bounding Box Immagine",
-                          value=((45.4635,9.1895),(45.4650,9.1910)))
-        folium.raster_layers.ImageOverlay(
-            image=arr,
-            bounds=bounds,
-            opacity=st.slider("Trasparenza Immagine",0.0,1.0,0.6)
-        ).add_to(m)
-        st.info(f"Overlay immagine caricata: bounding {bounds}")
+        img_url = img_to_data_url(img)
+        bounds = [[45.4635,9.1895],[45.4650,9.1910]]
+        overlay_js = f"""
+        <script src="https://unpkg.com/leaflet-distortableimage"></script>
+        <script>
+        var map = window.map_{id(m)};
+        var overlay = new L.DistortableImageOverlay(
+            "{img_url}",
+            {{
+                corners: [
+                    [{bounds[0][0]}, {bounds[0][1]}],
+                    [{bounds[0][0]}, {bounds[1][1]}],
+                    [{bounds[1][0]}, {bounds[1][1]}],
+                    [{bounds[1][0]}, {bounds[0][1]}]
+                ],
+                opacity: 0.7,
+                selected: true
+            }}
+        ).addTo(map);
+        </script>
+        """
+        m.get_root().html.add_child(folium.Element(overlay_js))
+        st.success("Overlay immagine PNG/JPG caricato e scalabile/rotabile")
 
-    #### Geotiff
+    # ---------- GEO TIFF ----------
     if geotiff_file:
-        with rasterio.open(geotiff_file) as src:
-            img = src.read()  # bands
-            bounds = src.bounds
-            box = [[bounds.bottom,bounds.left],[bounds.top,bounds.right]]
-            img = np.transpose(img, (1,2,0))
-            folium.raster_layers.ImageOverlay(
-                image=img,
-                bounds=box,
-                opacity=st.slider("Trasparenza GeoTIFF", 0.0,1.0,0.7)
-            ).add_to(m)
-        st.success("GeoTIFF visualizzato")
+        img_array = tifffile.imread(geotiff_file)
+        if img_array.ndim == 2:
+            img_array = np.stack([img_array]*3, axis=-1)
+        img = Image.fromarray(img_array)
+        bounds = [[45.4635,9.1895],[45.4650,9.1910]]
+        img_url = img_to_data_url(img)
+        overlay_js = f"""
+        <script src="https://unpkg.com/leaflet-distortableimage"></script>
+        <script>
+        var map = window.map_{id(m)};
+        var overlay = new L.DistortableImageOverlay(
+            "{img_url}",
+            {{
+                corners: [
+                    [{bounds[0][0]}, {bounds[0][1]}],
+                    [{bounds[0][0]}, {bounds[1][1]}],
+                    [{bounds[1][0]}, {bounds[1][1]}],
+                    [{bounds[1][0]}, {bounds[0][1]}]
+                ],
+                opacity: 0.7,
+                selected: true
+            }}
+        ).addTo(map);
+        </script>
+        """
+        m.get_root().html.add_child(folium.Element(overlay_js))
+        st.success("GeoTIFF caricato e scalabile/rotabile")
 
-    #### CAD DXF
-    if dxf_file:
-        ext = dxf_file.name.split(".")[-1].lower()
-        if ext in ["dxf","dwg"]:
-            try:
-                doc = ezdxf.readfile(dxf_file)
-                msp = doc.modelspace()
-                for line in msp.query("LINE"):
-                    start = (line.dxf.start.y, line.dxf.start.x)
-                    end = (line.dxf.end.y, line.dxf.end.x)
-                    folium.PolyLine([start,end],color="blue").add_to(m)
-                st.success("CAD DXF visualizzato come linee")
-            except Exception as e:
-                st.error(f"Errore lettura DXF/DWG: {e}")
-        elif ext=="svg":
-            svg_data = dxf_file.read().decode()
-            folium.raster_layers.ImageOverlay(
-                image=svg_data,
-                bounds=st.slider("Bounding SVG",((45.4635,9.1895),(45.4650,9.1910))),
-                opacity=st.slider("Trasparenza SVG",0.0,1.0,0.6)
-            ).add_to(m)
-            st.success("SVG visualizzato")
+    # ---------- SVG ----------
+    if svg_file:
+        svg_data = svg_file.read().decode()
+        img_url = "data:image/svg+xml;base64," + base64.b64encode(svg_data.encode()).decode()
+        bounds = [[45.4635,9.1895],[45.4650,9.1910]]
+        overlay_js = f"""
+        <script src="https://unpkg.com/leaflet-distortableimage"></script>
+        <script>
+        var map = window.map_{id(m)};
+        var overlay = new L.DistortableImageOverlay(
+            "{img_url}",
+            {{
+                corners: [
+                    [{bounds[0][0]}, {bounds[0][1]}],
+                    [{bounds[0][0]}, {bounds[1][1]}],
+                    [{bounds[1][0]}, {bounds[1][1]}],
+                    [{bounds[1][0]}, {bounds[0][1]}]
+                ],
+                opacity: 0.7,
+                selected: true
+            }}
+        ).addTo(map);
+        </script>
+        """
+        m.get_root().html.add_child(folium.Element(overlay_js))
+        st.success("SVG caricato e scalabile/rotabile")
 
-    # ---- Marker su Mappa ----
+    # ---------- MARKER EDITABLE ----------
     for k,p in st.session_state.punti.items():
-        folium.Marker([p["lat"],p["lon"]],tooltip=p["label"]).add_to(m)
+        folium.Marker([p["lat"],p["lon"]],
+                      tooltip=p.get("label",f"{p['lat']},{p['lon']}"),
+                      draggable=True).add_to(m)
 
-    # render
-    st_data = st_folium(m, width="100%",height=700)
+    # plugin Draw per aggiungere/eliminare marker
+    Draw(export=True, filename="map_export.geojson").add_to(m)
 
-    if st_data.get("last_clicked"):
-        lat = st_data["last_clicked"]["lat"]
-        lon = st_data["last_clicked"]["lng"]
-        st.session_state.punti[f"Punto_{len(st.session_state.punti)+1}"]={
-            "lat":lat,"lon":lon,"label":f"{lat:.5f},{lon:.5f}"
-        }
+    # ---------- VISUALIZZA MAPPA ----------
+    map_data = st_folium(m, width=1000, height=700)
+
+    # Salva marker click
+    if map_data.get("last_clicked"):
+        lat = map_data["last_clicked"]["lat"]
+        lon = map_data["last_clicked"]["lng"]
+        key = f"Punto_{len(st.session_state.punti)+1}"
+        st.session_state.punti[key] = {"lat":lat,"lon":lon,"label":f"{lat:.5f},{lon:.5f}"}
         save_mac(st.session_state.punti)
         st.success(f"Aggiunto marker in {lat:.5f},{lon:.5f}")
 
