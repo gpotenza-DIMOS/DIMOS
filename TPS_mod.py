@@ -26,6 +26,13 @@ class SokkiaIXController:
         self.connect()
 
     def connect(self):
+        # Verifica se la porta esiste
+        available_ports = [p.device for p in serial.tools.list_ports.comports()]
+        if self.port not in available_ports:
+            st.error(f"❌ Porta {self.port} non trovata! Porte disponibili: {available_ports}")
+            self.ser = None
+            return
+
         try:
             if self.ser and self.ser.is_open:
                 self.ser.close()
@@ -39,8 +46,7 @@ class SokkiaIXController:
                 xonxoff=self.xonxoff,
                 rtscts=self.rtscts
             )
-            # Wakeup protocollo Sokkia
-            self.ser.write(b"\x06\r\n")
+            self.ser.write(b"\x06\r\n")  # Wakeup protocollo Sokkia
             st.success(f"✅ Connesso a {self.port} @ {self.baudrate} baud")
         except Exception as e:
             st.error(f"❌ Errore connessione: {e}")
@@ -61,7 +67,6 @@ class SokkiaIXController:
             return None
 
     def process_data(self, raw, h_instr=1.50, h_reflector=1.50):
-        """Parsing base dati Sokkia iX"""
         if not raw or len(raw) < 5:
             return None
         try:
@@ -92,7 +97,6 @@ class SokkiaIXController:
         except Exception as e:
             return {"Errore": str(e), "Raw": raw}
 
-    # Comandi avanzati
     def change_face(self, position=1):
         cmd = "P1" if position == 1 else "P2"
         return self._send_command(cmd)
@@ -104,7 +108,6 @@ class SokkiaIXController:
     def power_off(self):
         return self._send_command("PW0")
 
-# Funzione Streamlit fuori dalla classe
 def run_tps_monitoring():
     st.set_page_config(page_title="Sokkia iX-1200 Controller", layout="wide")
     st.title("🛰️ TPS Monitoring - Sokkia iX-1200")
@@ -116,8 +119,10 @@ def run_tps_monitoring():
 
     # Configurazione seriale
     st.sidebar.header("Parametri Comunicazione")
-    ports = [p.device for p in serial.tools.list_ports.comports()]
+    available_ports = [p.device for p in serial.tools.list_ports.comports()]
     selected_port = st.text_input("Porta COM", value="COM11")
+    if selected_port not in available_ports:
+        st.warning(f"⚠️ Porta {selected_port} non trovata! Porte disponibili: {available_ports}")
     baudrate = st.selectbox("Baud Rate", [1200,2400,4800,9600,19200,38400,115200], index=3)
     data_bits = st.selectbox("Data Bits", [7,8], index=1)
     parity_map = {"None": serial.PARITY_NONE, "Even": serial.PARITY_EVEN, "Odd": serial.PARITY_ODD}
@@ -125,7 +130,7 @@ def run_tps_monitoring():
     stop_bits = st.selectbox("Stop Bits", [1,1.5,2], index=0)
     flow_ctrl = st.selectbox("Flow Control", ["None","Xon/Xoff","RTS/CTS"])
 
-    if st.button("🔌 Connetti / Reset"):
+    if st.button("🔌 Connetti / Reset") and selected_port in available_ports:
         st.session_state.stazione = SokkiaIXController(
             port=selected_port,
             baudrate=baudrate,
