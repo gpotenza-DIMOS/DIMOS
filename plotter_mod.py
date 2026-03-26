@@ -21,7 +21,7 @@ def run_plotter():
     with col_l:
         if os.path.exists("logo_dimos.jpg"): st.image("logo_dimos.jpg", width=300)
     
-    st.header("📈 Sistema Plotter DIMOS - Analisi e Diagnostica")
+    st.header("📈 Plotter DIMOS - Analisi e Stampe")
 
     file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsx', 'xlsm'], key="p_up")
     if not file_input: return
