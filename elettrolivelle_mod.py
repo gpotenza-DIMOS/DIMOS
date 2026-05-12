@@ -2,280 +2,206 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import warnings
-import logging
-import tempfile
 import os
+import re
+from io import BytesIO
 
-from docx import Document
-from docx.shared import Inches
+# --- GESTIONE LIBRERIA STAMPA ---
+try:
+    from docx import Document
+    from docx.shared import Inches
+    import plotly.io as pio
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
 
-# =========================================================
-# CONFIGURAZIONE E UTILITY
-# =========================================================
-warnings.filterwarnings("ignore")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("DIMOS")
-
-def converti_numerico(serie):
-    return pd.to_numeric(
-        serie.astype(str).str.replace(",", ".", regex=False).str.replace(" ", "", regex=False),
-        errors="coerce"
-    )
-
-def applica_filtro_sigma(serie, n_sigma=2.0):
-    try:
-        serie = converti_numerico(serie)
-        media = serie.mean()
-        std = serie.std()
-        if pd.isna(std) or std == 0:
-            return serie
-        filtro = ((serie >= media - n_sigma * std) & (serie <= media + n_sigma * std))
-        return serie.where(filtro)
-    except Exception as e:
-        logger.error(f"Errore filtro sigma: {e}")
-        return serie
-
-@st.cache_data
-def carica_excel(uploaded_file):
-    data = {}
-    try:
-        xl = pd.ExcelFile(uploaded_file, engine="openpyxl")
-        for sheet in xl.sheet_names:
-            df = xl.parse(sheet, header=0)
-            df = df.dropna(how="all")
-            df.columns = [str(c).strip() for c in df.columns]
-            data[sheet] = df
-        return data
-    except Exception as e:
-        logger.error(f"Errore caricamento Excel: {e}")
-        return {}
-
-def estrai_colonne_numeriche(df):
-    colonne = []
-    for c in df.columns[1:]:
-        if "Unnamed" in str(c): continue
-        serie_test = converti_numerico(df[c])
-        if serie_test.notnull().sum() > 0:
-            colonne.append(c)
-    return colonne
-
-def ottieni_default_params(colonne_disponibili):
-    """Ritorna DeltaE e DeltaN se presenti, altrimenti la prima colonna."""
-    defaults = [c for c in colonne_disponibili if c.lower() in ["deltae", "deltan", "delta e", "delta n"]]
-    if not defaults and colonne_disponibili:
-        defaults = [colonne_disponibili[0]]
-    return defaults
-
-# =========================================================
-# CREAZIONE REPORT WORD
-# =========================================================
-def genera_report_word(metodo, n_sigma, metriche_globali, image_path):
-    doc = Document()
-    doc.add_heading('DIMOS - REPORT ANALISI TOPOGRAFICA', level=1)
+# --- MOTORE DI CALCOLO (Identico al tuo VBA) ---
+@st.cache_data(show_spinner=False)
+def calcolo_motore_vba(df_values, l_barra, n_sigma, limit_val):
+    # Conversione Angolo -> mm: L * sin(rad(deg))
+    data_mm = l_barra * np.sin(np.radians(df_values.values))
+    # Delta C0: Valore attuale - Prima lettura
+    data_c0 = data_mm - data_mm[0, :]
+    # Deformata Cumulata CP0 (Somma orizzontale)
+    data_cp0 = np.cumsum(data_c0, axis=1)
     
-    doc.add_paragraph(f"Metodo elaborazione: {metodo}")
-    if metodo == "Filtro Sigma (Gauss)":
-        doc.add_paragraph(f"Valore Sigma: {n_sigma}")
-
-    # Sezione Grafico
-    if image_path and os.path.exists(image_path):
-        doc.add_heading('Visualizzazione Dati (Report)', level=2)
-        doc.add_picture(image_path, width=Inches(6.5))
-
-    # Sezione Metriche
-    doc.add_heading('Tabella Metriche', level=2)
-    table = doc.add_table(rows=1, cols=6)
-    table.style = 'Table Grid'
-    hdr_cells = table.rows[0].cells
-    for i, text in enumerate(["Punto", "Parametro", "MIN", "MAX", "RANGE", "ULTIMO"]):
-        hdr_cells[i].text = text
-
-    for row in metriche_globali:
-        cells = table.add_row().cells
-        cells[0].text = str(row["punto"])
-        cells[1].text = str(row["parametro"])
-        cells[2].text = f"{row['min']:.3f}"
-        cells[3].text = f"{row['max']:.3f}"
-        cells[4].text = f"{row['range']:.3f}"
-        cells[5].text = f"{row['ultimo']:.3f}"
-
-    tmp_docx = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-    doc.save(tmp_docx.name)
-    return tmp_docx.name
-
-# =========================================================
-# APP PRINCIPALE
-# =========================================================
-def run_tps_monitoring():
-    st.set_page_config(page_title="DIMOS - Analisi Topografica", layout="wide")
-    st.title("🛰️ DIMOS - Analisi Topografica Avanzata")
+    # Filtro Limiti Hard
+    data_cp0[np.abs(data_cp0) > limit_val] = np.nan
     
-    if "uploaded_file" not in st.session_state:
-        uploaded_file = st.file_uploader("📂 Carica file Excel (.xlsx)", type=["xlsx"])
-    else:
-        uploaded_file = st.session_state.uploaded_file
-
-    if uploaded_file is not None:
-        dfs = carica_excel(uploaded_file)
-        fogli = list(dfs.keys())
-        
-        # Estrazione di tutti i parametri possibili da tutti i fogli per i default
-        tutte_colonne = []
-        for f in fogli:
-            tutte_colonne.extend(estrai_colonne_numeriche(dfs[f]))
-        tutte_colonne = sorted(list(set(tutte_colonne)))
-
-        # --- 2. CONFIGURAZIONE VISUALIZZAZIONE A VIDEO ---
-        st.subheader("📺 Configurazione Visualizzazione (Grafico a Video)")
-        with st.container(border=True):
-            cv1, cv2 = st.columns([2, 1])
-            with cv1:
-                punti_video = st.multiselect(
-                    "Seleziona Sensori per la visualizzazione", 
-                    fogli, 
-                    key="punti_video"
-                )
-            with cv2:
-                metodo = st.radio("Metodo elaborazione", ["Dati Completi", "Filtro Sigma (Gauss)"], horizontal=True)
-                n_sigma = 2.0
-                if metodo == "Filtro Sigma (Gauss)":
-                    n_sigma = st.slider("Valore Sigma", 1.0, 5.0, 2.0, 0.5)
-
-            if punti_video:
-                parametri_video = st.multiselect(
-                    "Seleziona Parametri da visualizzare (uguali per tutti i sensori)",
-                    tutte_colonne,
-                    default=ottieni_default_params(tutte_colonne),
-                    key="params_video"
-                )
-
-        # --- 3. ELABORAZIONE GRAFICO VIDEO ---
-        if punti_video and parametri_video:
-            fig_video = go.Figure()
-            metriche_video = []
-
-            for punto in punti_video:
-                df = dfs[punto].copy()
-                col_data = df.columns[0]
-                df[col_data] = pd.to_datetime(df[col_data], errors="coerce", dayfirst=True)
-                df = df.dropna(subset=[col_data]).sort_values(col_data)
-
-                for parametro in parametri_video:
-                    if parametro not in df.columns: continue
-                    
-                    d = df[[col_data, parametro]].copy()
-                    d[parametro] = converti_numerico(d[parametro])
-                    d = d.dropna()
-
-                    if metodo == "Filtro Sigma (Gauss)":
-                        d[parametro] = applica_filtro_sigma(d[parametro], n_sigma)
-                        d = d.dropna()
-
-                    if d.empty: continue
-
-                    minimo, massimo = d[parametro].min(), d[parametro].max()
-                    ultimo = d[parametro].iloc[-1]
-                    metriche_video.append({
-                        "punto": punto, "parametro": parametro,
-                        "min": minimo, "max": massimo, "range": massimo - minimo, "ultimo": ultimo
-                    })
-
-                    fig_video.add_trace(go.Scatter(
-                        x=d[col_data], y=d[parametro],
-                        mode="lines+markers", name=f"{punto}: {parametro}"
-                    ))
-
-            # Render Grafico Video
-            st.plotly_chart(fig_video, use_container_width=True)
+    # Filtro Sigma Gauss su ogni sensore
+    means = np.nanmean(data_cp0, axis=0)
+    stds = np.nanstd(data_cp0, axis=0)
+    for j in range(data_cp0.shape[1]):
+        m, s = means[j], stds[j]
+        if s > 0:
+            mask = (data_cp0[:, j] < m - n_sigma*s) | (data_cp0[:, j] > m + n_sigma*s) | (np.isnan(data_cp0[:, j]))
+            data_cp0[mask, j] = m
             
-            # Espandibile per metriche a video
-            with st.expander("📊 Visualizza Metriche Real-time"):
-                m_cols = st.columns(4)
-                for idx, m in enumerate(metriche_video):
-                    m_cols[idx % 4].metric(
-                        label=f"{m['punto']} | {m['parametro']}",
-                        value=f"{m['ultimo']:.3f}",
-                        delta=f"R: {m['range']:.3f}"
-                    )
-        else:
-            st.info("Seleziona sensori e parametri per visualizzare il grafico.")
+    return pd.DataFrame(data_cp0, index=df_values.index).ffill().fillna(0)
 
-        # --- 4. CONFIGURAZIONE REPORT WORD (SEPARATA) ---
+# --- FUNZIONE PRINCIPALE (Richiamata da app_DIMOS.py) ---
+def run_elettrolivelle():
+    st.header("📏 Monitoraggio Avanzato Elettrolivelle")
+
+    # Sidebar: Parametri Tecnici
+    with st.sidebar:
         st.divider()
-        st.subheader("📄 Configurazione Report Word")
+        st.subheader("⚙️ Parametri Analisi")
+        file_input = st.file_uploader("Carica Excel Monitoraggio", type=['xlsm', 'xlsx'], key="el_up")
         
-        with st.container(border=True):
-            cw1, cw2 = st.columns([2, 1])
-            with cw1:
-                punti_word = st.multiselect(
-                    "Seleziona Sensori per il Report Word", 
-                    ["TUTTI"] + fogli,
-                    default=punti_video if punti_video else None,
-                    key="punti_word"
-                )
-            with cw2:
-                parametri_word = st.multiselect(
-                    "Seleziona Parametri per il Report Word",
-                    tutte_colonne,
-                    default=ottieni_default_params(tutte_colonne),
-                    key="params_word"
-                )
+        if file_input:
+            asse_sel = st.selectbox("Asse di Analisi", ["X", "Y", "Z"], key="el_asse")
+            l_barra = st.number_input("Lunghezza Barre/Distanza (mm)", value=3000)
+            sigma_val = st.slider("Filtro Sigma Gauss (σ)", 1.0, 4.0, 2.0)
+            limit_val = st.number_input("Limiti Ordinate Graph (mm)", value=30.0)
+            
+            st.divider()
+            st.subheader("🎬 Opzioni Video")
+            step_video = st.select_slider(
+                "Intervallo Campionamento:",
+                options=["Ogni Lettura", "1 Giorno", "2 Giorni", "3 Giorni", "1 Settimana"],
+                value="1 Giorno"
+            )
+            vel_animazione = st.slider("Velocità Video (ms)", 100, 2000, 400)
 
-        if st.button("🚀 Genera e Scarica Report Word"):
-            if not punti_word or not parametri_word:
-                st.error("Seleziona almeno un sensore e un parametro per il report.")
+    if not file_input:
+        st.info("Benvenuto. Carica un file Excel per attivare l'analisi delle deformate.")
+        return
+
+    # Lettura Excel
+    xls = pd.ExcelFile(file_input)
+    # Filtro fogli: solo quelli che iniziano con ETS_ e non sono fogli di calcolo pregressi
+    sheets = [s for s in xls.sheet_names if s not in ["ARRAY", "Info"] and not s.endswith(("C0", "CP0"))]
+    
+    tab1, tab2 = st.tabs(["📊 Analisi Dinamica", "🖨️ Report Word Massivo"])
+
+    with tab1:
+        sel_sheet = st.selectbox("Seleziona Layer/Stringa", sheets)
+        df_full = pd.read_excel(file_input, sheet_name=sel_sheet)
+        df_full.columns = [str(c).strip() for c in df_full.columns]
+        time_col = pd.to_datetime(df_full['Data e Ora'])
+
+        # --- LOGICA ARRAY: ORDINAMENTO FISICO ---
+        sensor_order = []
+        if "ARRAY" in xls.sheet_names:
+            df_array = pd.read_excel(file_input, sheet_name="ARRAY", header=None)
+            row_array = df_array[df_array[0] == sel_sheet]
+            if not row_array.empty:
+                # Prende gli ID sensore, li formatta CL_XXX
+                sensor_order = row_array.iloc[0, 1:].dropna().astype(float).astype(int).astype(str).tolist()
+                sensor_order = [s.zfill(3) for s in sensor_order]
+
+        # Selezione colonne sensori basata sull'ordine ARRAY
+        found_cols = [c for c in df_full.columns if "CL_" in c and f"_{asse_sel}" in c]
+        if sensor_order:
+            sensor_cols = []
+            for s_id in sensor_order:
+                match = [c for c in found_cols if f"CL_{s_id}" in c]
+                if match: sensor_cols.append(match[0])
+        else:
+            sensor_cols = found_cols
+
+        if not sensor_cols:
+            st.warning(f"Nessun sensore trovato per l'asse {asse_sel} nel foglio {sel_sheet}")
+            return
+
+        # Calcolo Deformata
+        df_cp0 = calcolo_motore_vba(df_full[sensor_cols].ffill(), l_barra, sigma_val, limit_val)
+        labels = [re.search(r'CL_(\d+)', c).group(1) for c in sensor_cols]
+
+        # Campionamento Temporale per Video
+        df_calc = df_cp0.copy()
+        df_calc['Data_Ora'] = time_col
+        if step_video == "1 Giorno":
+            df_sampled = df_calc.groupby(df_calc['Data_Ora'].dt.date).first()
+        elif "Giorni" in step_video:
+            days = int(step_video.split()[0])
+            df_sampled = df_calc.set_index('Data_Ora').resample(f'{days}D').first()
+        elif "Settimana" in step_video:
+            df_sampled = df_calc.set_index('Data_Ora').resample('W').first()
+        else:
+            df_sampled = df_calc.set_index('Data_Ora')
+        
+        df_sampled = df_sampled.drop(columns=['Data_Ora'], errors='ignore').dropna(how='all')
+
+        # --- GRAFICO DINAMICO (VIDEO) ---
+        st.subheader(f"🎬 Deformata {asse_sel}: {sel_sheet}")
+        fig_vid = go.Figure()
+        fig_vid.add_trace(go.Scatter(
+            x=labels, y=df_sampled.iloc[0], 
+            mode='lines+markers+text',
+            text=[f"{v:.2f}" for v in df_sampled.iloc[0]], 
+            textposition="top center",
+            line=dict(color="#1f77b4", width=2)
+        ))
+
+        fig_vid.update_layout(
+            xaxis=dict(type='category', title="ID Sensore (Ordine Fisico)"),
+            yaxis=dict(range=[-limit_val-2, limit_val+2], title="Cumulata (mm)"),
+            height=600, template="plotly_white",
+            sliders=[{"active": 0, "steps": [{"method": "animate", "label": str(t), 
+                      "args": [[str(i)], {"frame": {"duration": vel_animazione, "redraw": True}}]} 
+                      for i, t in enumerate(df_sampled.index)]}]
+        )
+        
+        fig_vid.frames = [go.Frame(data=[go.Scatter(
+            x=labels, y=df_sampled.iloc[i],
+            text=[f"{v:.2f}" for v in df_sampled.iloc[i]],
+            marker=dict(size=12, color=['red' if abs(v)>=5 else 'orange' if abs(v)>=2 else 'green' for v in df_sampled.iloc[i]])
+        )], name=str(i)) for i in range(len(df_sampled))]
+        
+        st.plotly_chart(fig_vid, use_container_width=True)
+
+        # --- TREND TEMPORALE ---
+        st.divider()
+        st.subheader("📈 Analisi Trend Temporale")
+        sel_sens = st.multiselect("Seleziona sensori da confrontare:", labels, default=labels[:3] if len(labels)>3 else labels)
+        if sel_sens:
+            fig_hist = go.Figure()
+            for s in sel_sens:
+                idx = labels.index(s)
+                fig_hist.add_trace(go.Scatter(x=time_col, y=df_cp0.iloc[:, idx], name=f"CL_{s}"))
+            fig_hist.update_layout(xaxis=dict(title="Tempo"), yaxis=dict(title="mm"), hovermode="x unified", template="plotly_white")
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+    with tab2:
+        st.subheader("🖨️ Generazione Report Word Massivo")
+        layers_print = st.multiselect("Seleziona Layer da includere nel report:", sheets, default=sheets)
+        
+        if st.button("🚀 GENERA DOCUMENTO WORD COMPLETO"):
+            if not DOCX_AVAILABLE:
+                st.error("Libreria 'python-docx' non installata.")
             else:
-                with st.spinner("Generazione report indipendente in corso..."):
-                    # Se selezionato TUTTI, espandiamo la lista
-                    punti_da_stampare = fogli if "TUTTI" in punti_word else punti_word
+                with st.spinner("Calcolo e generazione grafici in corso..."):
+                    doc = Document()
+                    doc.add_heading('REPORT MONITORAGGIO DIMOS - ELETTROLIVELLE', 0)
                     
-                    fig_word = go.Figure()
-                    metriche_word = []
-
-                    for punto in punti_da_stampare:
-                        if punto not in dfs: continue
-                        df = dfs[punto].copy()
-                        col_data = df.columns[0]
-                        df[col_data] = pd.to_datetime(df[col_data], errors="coerce", dayfirst=True)
-                        df = df.dropna(subset=[col_data]).sort_values(col_data)
-
-                        for parametro in parametri_word:
-                            if parametro not in df.columns: continue
-                            d = df[[col_data, parametro]].copy()
-                            d[parametro] = converti_numerico(d[parametro])
-                            d = d.dropna()
-                            if metodo == "Filtro Sigma (Gauss)":
-                                d[parametro] = applica_filtro_sigma(d[parametro], n_sigma)
-                                d = d.dropna()
-                            
-                            if d.empty: continue
-                            
-                            metriche_word.append({
-                                "punto": punto, "parametro": parametro,
-                                "min": d[parametro].min(), "max": d[parametro].max(), 
-                                "range": d[parametro].max() - d[parametro].min(), "ultimo": d[parametro].iloc[-1]
-                            })
-                            fig_word.add_trace(go.Scatter(x=d[col_data], y=d[parametro], mode="lines+markers", name=f"{punto}: {parametro}"))
-
-                    # Salvataggio immagine e generazione documento
-                    img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-                    try:
-                        fig_word.write_image(img_tmp.name, width=1200, height=600)
-                        report_path = genera_report_word(metodo, n_sigma, metriche_word, img_tmp.name)
+                    for l_name in layers_print:
+                        doc.add_page_break()
+                        doc.add_heading(f'LAYER: {l_name} - ASSE {asse_sel}', level=1)
                         
-                        with open(report_path, "rb") as f:
-                            st.download_button(
-                                label="⬇️ Clicca qui per scaricare il file Word",
-                                data=f,
-                                file_name="Report_Topografico_DIMOS.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                            )
-                    except Exception as e:
-                        st.error(f"Errore: {e}. Verifica l'installazione di 'kaleido'.")
+                        df_l = pd.read_excel(file_input, sheet_name=l_name)
+                        cols_l = [c for c in df_l.columns if "CL_" in c and f"_{asse_sel}" in c]
+                        df_res = calcolo_motore_vba(df_l[cols_l].ffill(), l_barra, sigma_val, limit_val)
+                        t_l = pd.to_datetime(df_l['Data e Ora'])
+                        
+                        for idx, c_name in enumerate(cols_l):
+                            s_id = re.search(r'CL_(\d+)', c_name).group(1)
+                            
+                            # Logica VBA: Pulizia Sigma 2 e Media Mobile 5 punti (come da tuo OTTIMO)
+                            serie = df_res.iloc[:, idx]
+                            m_val, d_val = serie.mean(), serie.std()
+                            serie_p = serie.mask(abs(serie - m_val) > (2 * d_val), m_val)
+                            serie_final = serie_p.rolling(5, center=True).mean().ffill().bfill()
+                            
+                            fig_tmp = go.Figure()
+                            fig_tmp.add_trace(go.Scatter(x=t_l, y=serie_final, line=dict(color='blue', width=1.5)))
+                            fig_tmp.update_layout(title=f"Sensore CL_{s_id} - Trend Temporale", width=900, height=400)
+                            
+                            img_stream = BytesIO(pio.to_image(fig_tmp, format="png"))
+                            doc.add_paragraph(f"Andamento temporale sensore: {s_id}")
+                            doc.add_picture(img_stream, width=Inches(6.2))
 
-    else:
-        st.info("Benvenuto in DIMOS. Carica un file Excel per iniziare l'analisi.")
-
-if __name__ == "__main__":
-    run_tps_monitoring()
+                    target_file = BytesIO()
+                    doc.save(target_file)
+                    st.download_button(label="📥 Scarica Report Word", data=target_file.getvalue(), file_name=f"Report_DIMOS_{asse_sel}.docx")
