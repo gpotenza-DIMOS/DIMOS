@@ -1,6 +1,6 @@
 # =========================================================
 # DIMOS - ANALISI TOPOGRAFICA AVANZATA
-# VERSIONE STABILE STREAMLIT CLOUD
+# VERSIONE STABILE STREAMLIT CLOUD - MODULO TPS
 # =========================================================
 
 import streamlit as st
@@ -15,13 +15,7 @@ import warnings
 # =========================================================
 warnings.filterwarnings("ignore")
 
-# =========================================================
-# CONFIGURAZIONE PAGINA
-# =========================================================
-st.set_page_config(
-    page_title="DIMOS - Analisi Topografica",
-    layout="wide"
-)
+# NOTA: st.set_page_config è stato rimosso perché gestito da APP_DIMOS.py
 
 # =========================================================
 # LOGGER
@@ -30,14 +24,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
 logger = logging.getLogger("DIMOS")
 
 # =========================================================
 # FUNZIONE CONVERSIONE NUMERICA ROBUSTA
 # =========================================================
 def converti_numerico(serie):
-
     return pd.to_numeric(
         serie.astype(str)
         .str.replace(",", ".", regex=False)
@@ -49,28 +41,19 @@ def converti_numerico(serie):
 # FILTRO SIGMA
 # =========================================================
 def applica_filtro_sigma(serie, n_sigma=2.0):
-
     try:
-
         serie = converti_numerico(serie)
-
         media = serie.mean()
         std = serie.std()
-
         if pd.isna(std) or std == 0:
             return serie
-
         filtro = (
             (serie >= media - n_sigma * std) &
             (serie <= media + n_sigma * std)
         )
-
         return serie.where(filtro)
-
     except Exception as e:
-
         logger.error(f"Errore filtro sigma: {e}")
-
         return serie
 
 # =========================================================
@@ -78,56 +61,29 @@ def applica_filtro_sigma(serie, n_sigma=2.0):
 # =========================================================
 @st.cache_data
 def carica_excel(uploaded_file):
-
     data = {}
-
     try:
-
         xl = pd.ExcelFile(
             uploaded_file,
             engine="openpyxl"
         )
-
         for sheet in xl.sheet_names:
-
             try:
-
-                df = xl.parse(
-                    sheet,
-                    header=0
-                )
-
-                # elimina righe completamente vuote
+                df = xl.parse(sheet, header=0)
                 df = df.dropna(how="all")
-
-                # pulizia nomi colonne
-                df.columns = [
-                    str(c).strip()
-                    for c in df.columns
-                ]
-
+                df.columns = [str(c).strip() for c in df.columns]
                 data[sheet] = df
-
             except Exception as e:
-
-                logger.warning(
-                    f"Errore foglio {sheet}: {e}"
-                )
-
+                logger.warning(f"Errore foglio {sheet}: {e}")
         return data
-
     except Exception as e:
-
-        logger.error(
-            f"Errore caricamento Excel: {e}"
-        )
-
+        logger.error(f"Errore caricamento Excel: {e}")
         return {}
 
 # =========================================================
-# MAIN APP
+# MAIN FUNCTION (Rinominata per APP_DIMOS)
 # =========================================================
-def main():
+def run_tps_monitoring():
 
     st.title("🛰️ DIMOS - Analisi Topografica Avanzata")
 
@@ -149,15 +105,12 @@ def main():
 
     uploaded_file = st.sidebar.file_uploader(
         "Carica file Excel (.xlsx)",
-        type=["xlsx"]
+        type=["xlsx"],
+        key="uploader_tps" # Chiave univoca per evitare conflitti
     )
 
     if uploaded_file is None:
-
-        st.info(
-            "Carica un file Excel per iniziare."
-        )
-
+        st.info("Carica un file Excel per iniziare.")
         return
 
     # =====================================================
@@ -166,172 +119,89 @@ def main():
     dfs = carica_excel(uploaded_file)
 
     if not dfs:
-
-        st.error(
-            "Impossibile leggere il file Excel."
-        )
-
+        st.error("Impossibile leggere il file Excel.")
         return
 
     fogli = list(dfs.keys())
-
-    st.sidebar.success(
-        f"Fogli trovati: {len(fogli)}"
-    )
+    st.sidebar.success(f"Fogli trovati: {len(fogli)}")
 
     # =====================================================
-    # SELEZIONE FOGLI
+    # SELEZIONE PUNTI
     # =====================================================
     st.sidebar.header("2️⃣ Selezione Punti")
-
-    seleziona_tutti = st.sidebar.checkbox(
-        "Seleziona tutti"
-    )
+    seleziona_tutti = st.sidebar.checkbox("Seleziona tutti")
 
     if seleziona_tutti:
-
         punti = fogli
-
     else:
-
-        punti = st.sidebar.multiselect(
-            "Seleziona fogli",
-            fogli
-        )
+        punti = st.sidebar.multiselect("Seleziona fogli", fogli)
 
     if not punti:
-
-        st.warning(
-            "Seleziona almeno un punto."
-        )
-
+        st.warning("Seleziona almeno un punto.")
         return
 
     # =====================================================
     # METODO ANALISI
     # =====================================================
     st.sidebar.header("3️⃣ Analisi")
-
     metodo = st.sidebar.radio(
         "Metodo elaborazione",
-        [
-            "Dati Completi",
-            "Filtro Sigma (Gauss)"
-        ]
+        ["Dati Completi", "Filtro Sigma (Gauss)"]
     )
 
     n_sigma = 2.0
-
     if metodo == "Filtro Sigma (Gauss)":
-
         n_sigma = st.sidebar.slider(
             "Valore Sigma",
-            min_value=1.0,
-            max_value=5.0,
-            value=2.0,
-            step=0.5
+            min_value=1.0, max_value=5.0, value=2.0, step=0.5
         )
 
     # =====================================================
     # LOOP PUNTI
     # =====================================================
     for punto in punti:
-
         st.markdown("---")
-
-        st.subheader(
-            f"📍 Punto: {punto}"
-        )
+        st.subheader(f"📍 Punto: {punto}")
 
         try:
-
             df = dfs[punto].copy()
 
-            # =================================================
             # DEBUG DATI
-            # =================================================
-            with st.expander(
-                "🔍 Anteprima dati"
-            ):
-
+            with st.expander("🔍 Anteprima dati"):
                 st.write(df.head())
                 st.write(df.dtypes)
 
-            # =================================================
             # VALIDAZIONE
-            # =================================================
             if df.empty:
-
-                st.warning(
-                    f"{punto}: foglio vuoto."
-                )
-
+                st.warning(f"{punto}: foglio vuoto.")
                 continue
 
             if len(df.columns) < 2:
-
-                st.warning(
-                    f"{punto}: colonne insufficienti."
-                )
-
+                st.warning(f"{punto}: colonne insufficienti.")
                 continue
 
-            # =================================================
             # DATA
-            # =================================================
             col_data = df.columns[0]
-
-            df[col_data] = pd.to_datetime(
-                df[col_data],
-                errors="coerce",
-                dayfirst=True
-            )
-
-            df = df.dropna(
-                subset=[col_data]
-            )
+            df[col_data] = pd.to_datetime(df[col_data], errors="coerce", dayfirst=True)
+            df = df.dropna(subset=[col_data]).sort_values(col_data)
 
             if df.empty:
-
-                st.warning(
-                    f"{punto}: nessuna data valida."
-                )
-
+                st.warning(f"{punto}: nessuna data valida.")
                 continue
 
-            df = df.sort_values(
-                col_data
-            )
-
-            # =================================================
             # COLONNE NUMERICHE
-            # =================================================
             colonne_numeriche = []
-
             for c in df.columns[1:]:
-
-                if "Unnamed" in str(c):
-                    continue
-
-                serie_test = converti_numerico(
-                    df[c]
-                )
-
+                if "Unnamed" in str(c): continue
+                serie_test = converti_numerico(df[c])
                 if serie_test.notnull().sum() > 0:
-
                     colonne_numeriche.append(c)
 
             if not colonne_numeriche:
-
-                st.warning(
-                    "Nessuna colonna numerica trovata."
-                )
-
+                st.warning("Nessuna colonna numerica trovata.")
                 continue
 
-            # =================================================
             # SELEZIONE SENSORI
-            # =================================================
             selezionate = st.multiselect(
                 f"Sensori disponibili - {punto}",
                 colonne_numeriche,
@@ -340,30 +210,16 @@ def main():
             )
 
             if len(selezionate) == 0:
-
-                st.warning(
-                    "Nessun sensore selezionato."
-                )
-
+                st.warning("Nessun sensore selezionato.")
                 continue
 
-            # =================================================
             # METRICHE
-            # =================================================
             st.markdown("### 📊 Metriche")
-
-            cols_metriche = st.columns(
-                len(selezionate)
-            )
+            cols_metriche = st.columns(len(selezionate))
 
             for i, col in enumerate(selezionate):
-
-                serie = converti_numerico(
-                    df[col]
-                ).dropna()
-
-                if serie.empty:
-                    continue
+                serie = converti_numerico(df[col]).dropna()
+                if serie.empty: continue
 
                 ultimo = serie.iloc[-1]
                 minimo = serie.min()
@@ -375,173 +231,77 @@ def main():
                     value=f"{ultimo:.3f}",
                     delta=f"Range {delta:.3f}"
                 )
+                cols_metriche[i].caption(f"MIN {minimo:.3f} | MAX {massimo:.3f}")
 
-                cols_metriche[i].caption(
-                    f"MIN {minimo:.3f} | MAX {massimo:.3f}"
-                )
-
-            # =================================================
             # GRAFICO
-            # =================================================
             fig = go.Figure()
 
             for col in selezionate:
-
                 try:
-
-                    d = df[
-                        [col_data, col]
-                    ].copy()
-
-                    d[col] = converti_numerico(
-                        d[col]
-                    )
-
+                    d = df[[col_data, col]].copy()
+                    d[col] = converti_numerico(d[col])
                     d = d.dropna()
 
-                    if d.empty:
-                        continue
+                    if d.empty: continue
 
-                    # =============================================
-                    # FILTRO SIGMA
-                    # =============================================
                     if metodo == "Filtro Sigma (Gauss)":
-
-                        d[col] = applica_filtro_sigma(
-                            d[col],
-                            n_sigma
-                        )
-
+                        d[col] = applica_filtro_sigma(d[col], n_sigma)
+                    
                     d = d.dropna()
+                    if d.empty: continue
 
-                    if d.empty:
-                        continue
-
-                    # =============================================
                     # GRAFICO DATI
-                    # =============================================
-                    fig.add_trace(
-                        go.Scatter(
-                            x=d[col_data],
-                            y=d[col],
-                            mode="lines+markers",
-                            name=col
-                        )
-                    )
+                    fig.add_trace(go.Scatter(
+                        x=d[col_data], y=d[col],
+                        mode="lines+markers", name=col
+                    ))
 
-                    # =============================================
-                    # TRENDLINE
-                    # =============================================
+                    # TRENDLINE (Versione robusta per evitare errori int64)
                     if len(d) >= 5:
-
                         try:
+                            # Trasformazione in giorni dall'inizio per il calcolo
+                            x_calc = (d[col_data] - d[col_data].min()).dt.total_seconds() / 86400
+                            y_calc = d[col]
+                            
+                            coeff = np.polyfit(x_calc, y_calc, 3)
+                            poly = np.poly1d(coeff)
 
-                            x = (
-                                d[col_data]
-                                .astype("int64")
-                                // 10**9
-                            )
-
-                            y = pd.to_numeric(
-                                d[col],
-                                errors="coerce"
-                            )
-
-                            mask = (
-                                np.isfinite(x) &
-                                np.isfinite(y)
-                            )
-
-                            x = x[mask]
-                            y = y[mask]
-
-                            if len(x) >= 5:
-
-                                coeff = np.polyfit(
-                                    x,
-                                    y,
-                                    3
-                                )
-
-                                poly = np.poly1d(
-                                    coeff
-                                )
-
-                                fig.add_trace(
-                                    go.Scatter(
-                                        x=d[col_data],
-                                        y=poly(x),
-                                        mode="lines",
-                                        name=f"Trend {col}",
-                                        line=dict(
-                                            dash="dot",
-                                            width=2
-                                        )
-                                    )
-                                )
-
+                            fig.add_trace(go.Scatter(
+                                x=d[col_data],
+                                y=poly(x_calc),
+                                mode="lines",
+                                name=f"Trend {col}",
+                                line=dict(dash="dot", width=2)
+                            ))
                         except Exception as e:
-
-                            logger.warning(
-                                f"Trendline fallita {col}: {e}"
-                            )
+                            logger.warning(f"Trendline fallita {col}: {e}")
 
                 except Exception as e:
+                    logger.error(f"Errore colonna {col}: {e}")
 
-                    logger.error(
-                        f"Errore colonna {col}: {e}"
-                    )
-
-            # =================================================
             # LAYOUT GRAFICO
-            # =================================================
             fig.update_layout(
                 template="plotly_white",
                 height=650,
                 hovermode="x unified",
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1
-                ),
-                xaxis=dict(
-                    title="Data",
-                    tickformat="%d/%m/%Y",
-                    tickangle=-45
-                ),
-                yaxis=dict(
-                    title="Valore"
-                )
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                xaxis=dict(title="Data", tickformat="%d/%m/%Y", tickangle=-45),
+                yaxis=dict(title="Valore")
             )
 
-            st.plotly_chart(
-                fig,
-                use_container_width=True
-            )
+            st.plotly_chart(fig, use_container_width=True)
 
         except Exception as e:
-
-            st.error(
-                f"Errore nel punto {punto}: {e}"
-            )
-
+            st.error(f"Errore nel punto {punto}: {e}")
             logger.exception(e)
 
 # =========================================================
-# AVVIO APP
+# AVVIO APP (Supporto sia per import che per esecuzione diretta)
 # =========================================================
 if __name__ == "__main__":
-
+    # Se viene eseguito da solo, ha bisogno della configurazione pagina
     try:
-
-        main()
-
-    except Exception as e:
-
-        st.error(
-            f"Errore generale applicazione: {e}"
-        )
-
-        logger.exception(e)
+        st.set_page_config(page_title="DIMOS - Analisi Topografica", layout="wide")
+    except:
+        pass
+    run_tps_monitoring()
