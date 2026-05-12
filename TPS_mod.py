@@ -81,7 +81,7 @@ def estrai_colonne_numeriche(df):
     return colonne
 
 def ottieni_default_params(lista_colonne):
-    defaults = [c for c in lista_colonne if c.upper() in ["DELTAE", "DELTAN", "DELTA E", "DELTA N", "DISTINCL"]]
+    defaults = [c for c in lista_colonne if c.upper() in ["DELTAE", "DELTAN"]]
     if not defaults and len(lista_colonne) > 0:
         return [lista_colonne[0]]
     return defaults
@@ -91,7 +91,7 @@ def ottieni_default_params(lista_colonne):
 # =========================================================
 def genera_report_word_separato(metodo, n_sigma, dati_report):
     doc = Document()
-    doc.add_heading('DIMOS - REPORT ANALISI TOPOGRAFICA DETTAGLIATO', level=1)
+    doc.add_heading('DIMOS - REPORT ANALISI MONITORAGGIO TOPOGRAFICO ', level=1)
     doc.add_paragraph(f"Metodo elaborazione dati Word: {metodo}")
     if "Sigma" in metodo:
         doc.add_paragraph(f"Filtro Outlier applicato: Sigma {n_sigma}")
@@ -127,7 +127,7 @@ def genera_report_word_separato(metodo, n_sigma, dati_report):
 # APP PRINCIPALE
 # =========================================================
 def run_tps_monitoring():
-    st.subheader("🛰️ DIMOS - Analisi Topografica Avanzata")
+    st.subheader("🛰️ DIMOS - Analisi Monitoraggio Topografico")
     
     uploaded_file = st.file_uploader("📂 Carica file Excel (.xlsx)", type=["xlsx"])
     
@@ -180,7 +180,7 @@ def run_tps_monitoring():
             fig_v.update_xaxes(tickformat="%b %Y", tickformatstops=[dict(dtickrange=[None, None], value="%b %Y")])
             st.plotly_chart(fig_v, use_container_width=True)
 
-        # --- SEZIONE 2: ESPORTAZIONE WORD (SPECULARE E INDIPENDENTE) ---
+        # --- SEZIONE 2: ESPORTAZIONE FILE WORD ---
         st.divider()
         st.write("### 📄 Configurazione Esportazione Report Word")
         w1, w2, w3 = st.columns([1.5, 1, 1])
@@ -195,7 +195,7 @@ def run_tps_monitoring():
             trend_w = st.checkbox("Inserisci Curva di Tendenza (Word)", value=False, key="tw")
             grado_w = st.slider("Grado del Polinomio (Word)", 1, 5, 2, key="gw") if trend_w else 1
 
-        if st.button("🚀 Genera Report Word Dettagliato"):
+        if st.button("🚀 Genera Grafici su file Word"):
             punti_effettivi = fogli if "TUTTI" in punti_w_raw else punti_w_raw
             if not punti_effettivi or not params_w:
                 st.warning("Seleziona sensori e parametri per il report.")
@@ -243,7 +243,7 @@ def run_tps_monitoring():
                     if dati_per_report:
                         path_w = genera_report_word_separato(metodo_w, ns_w, dati_per_report)
                         with open(path_w, "rb") as f:
-                            st.download_button("⬇️ Scarica Report Word", f, "Report_DIMOS_Dettagliato.docx")
+                            st.download_button("⬇️ Scarica Report Word", f, "Report_Monitoring Survey DIMOS_.docx")
 
 if __name__ == "__main__":
     run_tps_monitoring()
