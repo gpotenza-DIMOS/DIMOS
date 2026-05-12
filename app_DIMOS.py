@@ -34,7 +34,7 @@ if not st.session_state["auth"]:
             u = st.text_input("ID")
             p = st.text_input("Password", type="password")
             if st.button("ACCEDI"):
-                if u == "asdf" and p == "asdf":
+                if u == "dimos" and p == "micai!":
                     st.session_state["auth"] = True
                     st.session_state["page"] = "home"
                     st.rerun()
