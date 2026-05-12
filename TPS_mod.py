@@ -60,10 +60,17 @@ def estrai_colonne_numeriche(df):
             colonne.append(c)
     return colonne
 
+def ottieni_default_params(lista_colonne):
+    """Ritorna DeltaE e DeltaN se presenti, altrimenti le prime disponibili."""
+    defaults = [c for c in lista_colonne if c.upper() in ["DELTAE", "DELTAN", "DELTA E", "DELTA N"]]
+    if not defaults and len(lista_colonne) > 0:
+        return [lista_colonne[0]]
+    return defaults
+
 # =========================================================
 # CREAZIONE REPORT WORD
 # =========================================================
-def genera_report_word(punti, configurazione, metodo, n_sigma, metriche_globali, image_path):
+def genera_report_word(metodo, n_sigma, metriche_globali, image_path):
     doc = Document()
     doc.add_heading('DIMOS - REPORT ANALISI TOPOGRAFICA', level=1)
     
@@ -102,10 +109,8 @@ def genera_report_word(punti, configurazione, metodo, n_sigma, metriche_globali,
 # =========================================================
 def run_tps_monitoring():
     st.set_page_config(page_title="DIMOS - Analisi Topografica", layout="wide")
-    
     st.title("🛰️ DIMOS - Analisi Topografica Avanzata")
     
-    # --- 1. CARICAMENTO FILE ---
     with st.container(border=True):
         uploaded_file = st.file_uploader("📂 Carica file Excel (.xlsx)", type=["xlsx"])
     
@@ -113,95 +118,87 @@ def run_tps_monitoring():
         dfs = carica_excel(uploaded_file)
         fogli = list(dfs.keys())
         
-        # --- 2. CONFIGURAZIONE NELLA PAGINA PRINCIPALE ---
-        st.subheader("⚙️ Configurazione Analisi")
-        
+        # Estraiamo tutte le colonne numeriche possibili da tutti i fogli per i menu di scelta
+        tutte_colonne = []
+        for f in fogli:
+            tutte_colonne.extend(estrai_colonne_numeriche(dfs[f]))
+        colonne_uniche = sorted(list(set(tutte_colonne)))
+
+        # --- 2. CONFIGURAZIONE VISUALIZZAZIONE ---
+        st.subheader("📺 Configurazione Visualizzazione (Grafico)")
         c1, c2 = st.columns([2, 1])
+        
         with c1:
-            punti_selezionati = st.multiselect(
-                "Seleziona Sensori/Punti (Layer)", 
+            punti_video = st.multiselect(
+                "Seleziona Sensori/Punti da visualizzare", 
                 fogli, 
-                help="Scegli uno o più fogli da analizzare"
+                key="punti_video"
             )
+            
+            # Se ci sono punti selezionati, mostro la scelta parametri unificata
+            parametri_video = []
+            if punti_video:
+                parametri_video = st.multiselect(
+                    "Parametri da graficare (saranno applicati a tutti i sensori selezionati)",
+                    colonne_uniche,
+                    default=ottieni_default_params(colonne_uniche),
+                    key="params_video"
+                )
+
         with c2:
             metodo = st.radio("Metodo elaborazione", ["Dati Completi", "Filtro Sigma (Gauss)"], horizontal=True)
             n_sigma = 2.0
             if metodo == "Filtro Sigma (Gauss)":
                 n_sigma = st.slider("Valore Sigma", 1.0, 5.0, 2.0, 0.5)
 
-        if not punti_selezionati:
-            st.info("Seleziona almeno un sensore per iniziare l'analisi.")
-            return
+        # --- 3. ELABORAZIONE E RENDERING GRAFICO VIDEO ---
+        if punti_video and parametri_video:
+            st.divider()
+            fig = go.Figure()
+            metriche_video = []
 
-        # Scelta parametri per ogni sensore
-        configurazione = {}
-        st.markdown("#### 🔍 Selezione Parametri per Sensore")
-        
-        # Usiamo le colonne per non allungare troppo la pagina se ci sono molti sensori
-        cols_punti = st.columns(len(punti_selezionati))
-        for i, punto in enumerate(punti_selezionati):
-            with cols_punti[i]:
-                df_temp = dfs[punto]
-                colonne_disp = estrai_colonne_numeriche(df_temp)
-                selezione = st.multiselect(
-                    f"Parametri {punto}", 
-                    colonne_disp, 
-                    default=colonne_disp[:1],
-                    key=f"params_{punto}"
-                )
-                configurazione[punto] = selezione
+            for punto in punti_video:
+                df = dfs[punto].copy()
+                col_data = df.columns[0]
+                df[col_data] = pd.to_datetime(df[col_data], errors="coerce", dayfirst=True)
+                df = df.dropna(subset=[col_data]).sort_values(col_data)
 
-        # --- 3. ELABORAZIONE E GRAFICI ---
-        st.divider()
-        fig = go.Figure()
-        metriche_globali = []
-
-        for punto in configurazione:
-            if not configurazione[punto]: continue
-            
-            df = dfs[punto].copy()
-            col_data = df.columns[0] # Assumiamo la prima colonna sia la data
-            df[col_data] = pd.to_datetime(df[col_data], errors="coerce", dayfirst=True)
-            df = df.dropna(subset=[col_data]).sort_values(col_data)
-
-            for parametro in configurazione[punto]:
-                d = df[[col_data, parametro]].copy()
-                d[parametro] = converti_numerico(d[parametro])
-                d = d.dropna()
-
-                if metodo == "Filtro Sigma (Gauss)":
-                    d[parametro] = applica_filtro_sigma(d[parametro], n_sigma)
+                for parametro in parametri_video:
+                    if parametro not in df.columns: continue
+                    
+                    d = df[[col_data, parametro]].copy()
+                    d[parametro] = converti_numerico(d[parametro])
                     d = d.dropna()
 
-                if d.empty: continue
+                    if metodo == "Filtro Sigma (Gauss)":
+                        d[parametro] = applica_filtro_sigma(d[parametro], n_sigma)
+                        d = d.dropna()
 
-                # Calcolo Metriche
-                minimo, massimo = d[parametro].min(), d[parametro].max()
-                ultimo = d[parametro].iloc[-1]
-                metriche_globali.append({
-                    "punto": punto, "parametro": parametro,
-                    "min": minimo, "max": massimo, "range": massimo - minimo, "ultimo": ultimo
-                })
+                    if d.empty: continue
 
-                # Aggiunta al Grafico
-                fig.add_trace(go.Scatter(
-                    x=d[col_data], y=d[parametro],
-                    mode="lines+markers", name=f"{punto}: {parametro}"
-                ))
+                    # Calcolo Metriche per Video
+                    minimo, massimo = d[parametro].min(), d[parametro].max()
+                    ultimo = d[parametro].iloc[-1]
+                    metriche_video.append({
+                        "punto": punto, "parametro": parametro,
+                        "min": minimo, "max": massimo, "range": massimo - minimo, "ultimo": ultimo
+                    })
 
-        # Visualizzazione Metriche
-        if metriche_globali:
-            st.subheader("📊 Metriche Real-time")
+                    fig.add_trace(go.Scatter(
+                        x=d[col_data], y=d[parametro],
+                        mode="lines+markers", name=f"{punto}: {parametro}"
+                    ))
+
+            # Visualizzazione Metriche Video
+            st.subheader("📊 Metriche Real-time (Video)")
             m_cols = st.columns(4)
-            for idx, m in enumerate(metriche_globali):
+            for idx, m in enumerate(metriche_video):
                 m_cols[idx % 4].metric(
                     label=f"{m['punto']} | {m['parametro']}",
                     value=f"{m['ultimo']:.3f}",
-                    delta=f"R: {m['range']:.3f}",
-                    delta_color="normal"
+                    delta=f"R: {m['range']:.3f}"
                 )
 
-            # Visualizzazione Grafico
             fig.update_layout(
                 template="plotly_white", height=600,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -210,37 +207,85 @@ def run_tps_monitoring():
             )
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- 4. ESPORTAZIONE ---
+            # --- 4. CONFIGURAZIONE SEPARATA PER WORD ---
             st.divider()
-            col_exp, col_empty = st.columns([1, 2])
+            st.subheader("📄 Configurazione Esportazione Report Word")
             
-            with col_exp:
-                st.subheader("📄 Esportazione Report")
-                if st.button("🚀 Genera Report Word con Grafico Corrente"):
-                    with st.spinner("Generazione in corso..."):
-                        # Salvataggio temporaneo immagine per Word
+            w_col1, w_col2 = st.columns(2)
+            with w_col1:
+                opzioni_sensori_word = ["TUTTI"] + fogli
+                punti_word_raw = st.multiselect(
+                    "Seleziona Sensori per il file Word",
+                    opzioni_sensori_word,
+                    default=punti_video, # Propone quelli a video come punto di partenza
+                    key="punti_word"
+                )
+            with w_col2:
+                parametri_word = st.multiselect(
+                    "Seleziona Parametri per il file Word",
+                    colonne_uniche,
+                    default=parametri_video if parametri_video else ottieni_default_params(colonne_uniche),
+                    key="params_word"
+                )
+
+            if st.button("🚀 Genera Report Word con Impostazioni di Stampa"):
+                # Logica per gestire l'opzione "TUTTI"
+                if "TUTTI" in punti_word_raw:
+                    punti_effettivi_word = fogli
+                else:
+                    punti_effettivi_word = punti_word_raw
+
+                if not punti_effettivi_word or not parametri_word:
+                    st.warning("Seleziona almeno un sensore e un parametro per il Word.")
+                else:
+                    with st.spinner("Generazione Report Word in corso..."):
+                        # Generiamo un grafico ad hoc per il Word in base alla selezione separata
+                        fig_word = go.Figure()
+                        metriche_word = []
+
+                        for punto in punti_effettivi_word:
+                            dfw = dfs[punto].copy()
+                            col_data_w = dfw.columns[0]
+                            dfw[col_data_w] = pd.to_datetime(dfw[col_data_w], errors="coerce", dayfirst=True)
+                            dfw = dfw.dropna(subset=[col_data_w]).sort_values(col_data_w)
+
+                            for parametro_w in parametri_word:
+                                if parametro_w not in dfw.columns: continue
+                                dw = dfw[[col_data_w, parametro_w]].copy()
+                                dw[parametro_w] = converti_numerico(dw[parametro_w])
+                                dw = dw.dropna()
+
+                                if metodo == "Filtro Sigma (Gauss)":
+                                    dw[parametro_w] = applica_filtro_sigma(dw[parametro_w], n_sigma)
+                                    dw = dw.dropna()
+
+                                if dw.empty: continue
+
+                                metriche_word.append({
+                                    "punto": punto, "parametro": parametro_w,
+                                    "min": dw[parametro_w].min(), "max": dw[parametro_w].max(), 
+                                    "range": dw[parametro_w].max() - dw[parametro_w].min(), "ultimo": dw[parametro_w].iloc[-1]
+                                })
+                                fig_word.add_trace(go.Scatter(x=dw[col_data_w], y=dw[parametro_w], mode="lines+markers", name=f"{punto}: {parametro_w}"))
+
+                        fig_word.update_layout(template="plotly_white", width=1200, height=600)
+                        
                         img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
                         try:
-                            fig.write_image(img_tmp.name, width=1200, height=600)
-                            
-                            report_path = genera_report_word(
-                                punti=punti_selezionati,
-                                configurazione=configurazione,
-                                metodo=metodo,
-                                n_sigma=n_sigma,
-                                metriche_globali=metriche_globali,
-                                image_path=img_tmp.name
-                            )
+                            fig_word.write_image(img_tmp.name)
+                            report_path = genera_report_word(metodo, n_sigma, metriche_word, img_tmp.name)
 
                             with open(report_path, "rb") as f:
                                 st.download_button(
                                     label="⬇️ Scarica Report Word",
                                     data=f,
-                                    file_name=f"Report_DIMOS_{punto}.docx",
+                                    file_name="Report_Analisi_DIMOS.docx",
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                                 )
                         except Exception as e:
-                            st.error(f"Errore durante l'esportazione: {e}. Assicurati di avere 'kaleido' installato.")
+                            st.error(f"Errore esportazione: {e}. Assicurati di avere 'kaleido' installato.")
+        else:
+            st.info("Seleziona almeno un sensore e un parametro per visualizzare l'analisi.")
 
     else:
         st.info("Benvenuto in DIMOS. Carica un file Excel per iniziare l'analisi topografica.")
