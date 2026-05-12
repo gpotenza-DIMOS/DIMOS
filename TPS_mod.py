@@ -17,6 +17,12 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("DIMOS")
 
+# Dizionario per la traduzione dei mesi in italiano per Plotly
+MONTHS_IT = {
+    "Jan": "Gen", "Feb": "Feb", "Mar": "Mar", "Apr": "Apr", "May": "Mag", "Jun": "Giu",
+    "Jul": "Lug", "Aug": "Ago", "Sep": "Set", "Oct": "Ott", "Nov": "Nov", "Dec": "Dic"
+}
+
 def converti_numerico(serie):
     return pd.to_numeric(
         serie.astype(str).str.replace(",", ".", regex=False).str.replace(" ", "", regex=False),
@@ -75,7 +81,7 @@ def estrai_colonne_numeriche(df):
     return colonne
 
 def ottieni_default_params(lista_colonne):
-    defaults = [c for c in lista_colonne if c.upper() in ["DELTAE", "DELTAN", "DELTA E", "DELTA N"]]
+    defaults = [c for c in lista_colonne if c.upper() in ["DELTAE", "DELTAN", "DELTA E", "DELTA N", "DISTINCL"]]
     if not defaults and len(lista_colonne) > 0:
         return [lista_colonne[0]]
     return defaults
@@ -86,9 +92,9 @@ def ottieni_default_params(lista_colonne):
 def genera_report_word_separato(metodo, n_sigma, dati_report):
     doc = Document()
     doc.add_heading('DIMOS - REPORT ANALISI TOPOGRAFICA DETTAGLIATO', level=1)
-    doc.add_paragraph(f"Metodo elaborazione dati: {metodo}")
+    doc.add_paragraph(f"Metodo elaborazione dati Word: {metodo}")
     if "Sigma" in metodo:
-        doc.add_paragraph(f"Filtro Outlier: Sigma {n_sigma}")
+        doc.add_paragraph(f"Filtro Outlier applicato: Sigma {n_sigma}")
 
     for sezione in dati_report:
         doc.add_page_break() if dati_report.index(sezione) > 0 else None
@@ -98,7 +104,7 @@ def genera_report_word_separato(metodo, n_sigma, dati_report):
         if sezione['img_path'] and os.path.exists(sezione['img_path']):
             doc.add_picture(sezione['img_path'], width=Inches(6.0))
         
-        doc.add_heading(f"Metriche - {punto_nome}", level=3)
+        doc.add_heading(f"Metriche Calcolate - {punto_nome}", level=3)
         table = doc.add_table(rows=1, cols=5)
         table.style = 'Table Grid'
         hdr_cells = table.rows[0].cells
@@ -121,7 +127,7 @@ def genera_report_word_separato(metodo, n_sigma, dati_report):
 # APP PRINCIPALE
 # =========================================================
 def run_tps_monitoring():
-    st.title("🛰️ DIMOS - Analisi Topografica Avanzata")
+    st.subheader("🛰️ DIMOS - Analisi Topografica Avanzata")
     
     uploaded_file = st.file_uploader("📂 Carica file Excel (.xlsx)", type=["xlsx"])
     
@@ -135,17 +141,18 @@ def run_tps_monitoring():
         colonne_uniche = sorted(list(set(tutte_colonne)))
 
         # --- SEZIONE 1: CONFIGURAZIONE VIDEO ---
-        st.subheader("📺 Configurazione Visualizzazione (Grafico Video)")
-        c1, c2, c3 = st.columns([1.5, 1, 1])
-        with c1:
+        st.write("### 📺 Configurazione Visualizzazione e Trend (Video)")
+        cv1, cv2, cv3 = st.columns([1.5, 1, 1])
+        with cv1:
             punti_v = st.multiselect("Seleziona Sensori (Video)", fogli, key="pv")
             params_v = st.multiselect("Parametri (Video)", colonne_uniche, default=ottieni_default_params(colonne_uniche), key="prv")
-        with c2:
-            metodo_v = st.radio("Metodo Video", ["Dati Completi", "Filtro Sigma (Gauss)"], key="mv")
-            ns_v = st.slider("Sigma Video", 1.0, 5.0, 2.0, 0.5) if "Sigma" in metodo_v else 2.0
-        with c3:
-            trend_v = st.checkbox("Inserisci Trend (Video)", value=False, key="tv")
-            grado_v = st.slider("Grado Trend (Video)", 1, 5, 2) if trend_v else 1
+        with cv2:
+            metodo_v = st.radio("Metodo elaborazione (Video)", ["Dati Completi", "Filtro Sigma (Gauss)"], key="mv")
+            ns_v = st.slider("Valore Sigma (Video)", 1.0, 5.0, 2.0, 0.5) if "Sigma" in metodo_v else 2.0
+        with cv3:
+            st.write("**Trend Polinomiale**")
+            trend_v = st.checkbox("Inserisci Curva di Tendenza", value=False, key="tv")
+            grado_v = st.slider("Grado del Polinomio", 1, 5, 2, key="gv") if trend_v else 1
 
         if punti_v and params_v:
             fig_v = go.Figure()
@@ -168,21 +175,25 @@ def run_tps_monitoring():
                             tr = calcola_trend_polinomiale(d[col_dt], d[pr], grado_v)
                             if tr is not None:
                                 fig_v.add_trace(go.Scatter(x=d[col_dt], y=tr, mode="lines", line=dict(dash='dash'), name=f"Trend {grado_v}° ({p})"))
+            
+            # Formattazione date in Italiano
+            fig_v.update_xaxes(tickformat="%b %Y", tickformatstops=[dict(dtickrange=[None, None], value="%b %Y")])
             st.plotly_chart(fig_v, use_container_width=True)
 
-        # --- SEZIONE 2: ESPORTAZIONE WORD (SPECULARE) ---
+        # --- SEZIONE 2: ESPORTAZIONE WORD (SPECULARE E INDIPENDENTE) ---
         st.divider()
-        st.subheader("📄 Configurazione Esportazione Report Word")
+        st.write("### 📄 Configurazione Esportazione Report Word")
         w1, w2, w3 = st.columns([1.5, 1, 1])
         with w1:
-            punti_w_raw = st.multiselect("Sensori per Report (Un grafico ognuno)", ["TUTTI"] + fogli, default=punti_v, key="pw")
-            params_w = st.multiselect("Parametri Report", colonne_uniche, default=params_v, key="prw")
+            punti_w_raw = st.multiselect("Seleziona Sensori (Word)", ["TUTTI"] + fogli, default=punti_v, key="pw")
+            params_w = st.multiselect("Parametri (Word)", colonne_uniche, default=params_v, key="prw")
         with w2:
-            metodo_w = st.radio("Metodo Report Word", ["Dati Completi", "Filtro Sigma (Gauss)"], key="mw")
-            ns_w = st.slider("Sigma Word", 1.0, 5.0, 2.0, 0.5) if "Sigma" in metodo_w else 2.0
+            metodo_w = st.radio("Metodo elaborazione (Word)", ["Dati Completi", "Filtro Sigma (Gauss)"], key="mw")
+            ns_w = st.slider("Valore Sigma (Word)", 1.0, 5.0, 2.0, 0.5) if "Sigma" in metodo_w else 2.0
         with w3:
-            trend_w = st.checkbox("Inserisci Trend (Word)", value=False, key="tw")
-            grado_w = st.slider("Grado Trend (Word)", 1, 5, 2) if trend_w else 1
+            st.write("**Trend Polinomiale**")
+            trend_w = st.checkbox("Inserisci Curva di Tendenza (Word)", value=False, key="tw")
+            grado_w = st.slider("Grado del Polinomio (Word)", 1, 5, 2, key="gw") if trend_w else 1
 
         if st.button("🚀 Genera Report Word Dettagliato"):
             punti_effettivi = fogli if "TUTTI" in punti_w_raw else punti_w_raw
@@ -222,6 +233,9 @@ def run_tps_monitoring():
 
                         if metriche_p:
                             fig_p.update_layout(title=f"Sensore: {punto}", template="plotly_white")
+                            # Date in italiano anche nel grafico Word
+                            fig_p.update_xaxes(tickformat="%b %Y")
+                            
                             img_t = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
                             fig_p.write_image(img_t.name, width=1000, height=500)
                             dati_per_report.append({"punto": punto, "metriche": metriche_p, "img_path": img_t.name})
@@ -229,7 +243,7 @@ def run_tps_monitoring():
                     if dati_per_report:
                         path_w = genera_report_word_separato(metodo_w, ns_w, dati_per_report)
                         with open(path_w, "rb") as f:
-                            st.download_button("⬇️ Scarica Report", f, "Report_DIMOS_Dettagliato.docx")
+                            st.download_button("⬇️ Scarica Report Word", f, "Report_DIMOS_Dettagliato.docx")
 
 if __name__ == "__main__":
     run_tps_monitoring()
