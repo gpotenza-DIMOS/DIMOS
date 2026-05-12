@@ -1,3 +1,8 @@
+# =========================================================
+# DIMOS - ANALISI TOPOGRAFICA AVANZATA
+# VERSIONE STABILE STREAMLIT CLOUD
+# =========================================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,21 +10,22 @@ import plotly.graph_objects as go
 import logging
 import warnings
 
-from numpy.polynomial.polyutils import RankWarning
+# =========================================================
+# DISABILITA WARNING
+# =========================================================
+warnings.filterwarnings("ignore")
 
-# ======================================================
-# CONFIGURAZIONE APP
-# ======================================================
+# =========================================================
+# CONFIGURAZIONE PAGINA
+# =========================================================
 st.set_page_config(
     page_title="DIMOS - Analisi Topografica",
     layout="wide"
 )
 
-warnings.simplefilter("ignore", RankWarning)
-
-# ======================================================
+# =========================================================
 # LOGGER
-# ======================================================
+# =========================================================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
@@ -27,13 +33,26 @@ logging.basicConfig(
 
 logger = logging.getLogger("DIMOS")
 
-# ======================================================
-# FUNZIONE FILTRO SIGMA
-# ======================================================
+# =========================================================
+# FUNZIONE CONVERSIONE NUMERICA ROBUSTA
+# =========================================================
+def converti_numerico(serie):
+
+    return pd.to_numeric(
+        serie.astype(str)
+        .str.replace(",", ".", regex=False)
+        .str.replace(" ", "", regex=False),
+        errors="coerce"
+    )
+
+# =========================================================
+# FILTRO SIGMA
+# =========================================================
 def applica_filtro_sigma(serie, n_sigma=2.0):
 
     try:
-        serie = pd.to_numeric(serie, errors="coerce")
+
+        serie = converti_numerico(serie)
 
         media = serie.mean()
         std = serie.std()
@@ -49,13 +68,14 @@ def applica_filtro_sigma(serie, n_sigma=2.0):
         return serie.where(filtro)
 
     except Exception as e:
+
         logger.error(f"Errore filtro sigma: {e}")
+
         return serie
 
-
-# ======================================================
+# =========================================================
 # CARICAMENTO EXCEL
-# ======================================================
+# =========================================================
 @st.cache_data
 def carica_excel(uploaded_file):
 
@@ -63,18 +83,24 @@ def carica_excel(uploaded_file):
 
     try:
 
-        xl = pd.ExcelFile(uploaded_file, engine="openpyxl")
+        xl = pd.ExcelFile(
+            uploaded_file,
+            engine="openpyxl"
+        )
 
         for sheet in xl.sheet_names:
 
             try:
 
-                df = xl.parse(sheet, header=0)
+                df = xl.parse(
+                    sheet,
+                    header=0
+                )
 
-                # rimuove righe completamente vuote
+                # elimina righe completamente vuote
                 df = df.dropna(how="all")
 
-                # pulizia colonne
+                # pulizia nomi colonne
                 df.columns = [
                     str(c).strip()
                     for c in df.columns
@@ -83,48 +109,42 @@ def carica_excel(uploaded_file):
                 data[sheet] = df
 
             except Exception as e:
-                logger.warning(f"Errore foglio {sheet}: {e}")
+
+                logger.warning(
+                    f"Errore foglio {sheet}: {e}"
+                )
 
         return data
 
     except Exception as e:
-        logger.error(f"Errore caricamento Excel: {e}")
+
+        logger.error(
+            f"Errore caricamento Excel: {e}"
+        )
+
         return {}
 
-
-# ======================================================
-# FUNZIONE CONVERSIONE NUMERICA ROBUSTA
-# ======================================================
-def converti_numerico(serie):
-
-    return pd.to_numeric(
-        serie.astype(str)
-        .str.replace(",", ".", regex=False)
-        .str.replace(" ", "", regex=False),
-        errors="coerce"
-    )
-
-
-# ======================================================
+# =========================================================
 # MAIN APP
-# ======================================================
+# =========================================================
 def main():
 
     st.title("🛰️ DIMOS - Analisi Topografica Avanzata")
 
     st.markdown("""
-    Applicazione per:
-    - lettura file Excel multi-foglio
-    - visualizzazione dati topografici
-    - trendline automatiche
-    - filtro sigma (Gauss)
+    ### Funzioni disponibili
+    - Lettura file Excel multi-foglio
+    - Analisi temporale sensori
+    - Trendline automatiche
+    - Filtro Sigma (Gauss)
+    - Gestione dati sporchi Excel
     """)
 
     st.markdown("---")
 
-    # ======================================================
+    # =====================================================
     # SIDEBAR - UPLOAD
-    # ======================================================
+    # =====================================================
     st.sidebar.header("1️⃣ Caricamento File")
 
     uploaded_file = st.sidebar.file_uploader(
@@ -133,50 +153,67 @@ def main():
     )
 
     if uploaded_file is None:
-        st.info("Carica un file Excel per iniziare.")
+
+        st.info(
+            "Carica un file Excel per iniziare."
+        )
+
         return
 
-    # ======================================================
-    # LETTURA FILE
-    # ======================================================
+    # =====================================================
+    # LETTURA EXCEL
+    # =====================================================
     dfs = carica_excel(uploaded_file)
 
     if not dfs:
-        st.error("Impossibile leggere il file Excel.")
+
+        st.error(
+            "Impossibile leggere il file Excel."
+        )
+
         return
 
     fogli = list(dfs.keys())
 
-    st.sidebar.success(f"Fogli trovati: {len(fogli)}")
+    st.sidebar.success(
+        f"Fogli trovati: {len(fogli)}"
+    )
 
-    # ======================================================
-    # SELEZIONE PUNTI
-    # ======================================================
+    # =====================================================
+    # SELEZIONE FOGLI
+    # =====================================================
     st.sidebar.header("2️⃣ Selezione Punti")
 
     seleziona_tutti = st.sidebar.checkbox(
-        "Seleziona tutti i punti"
+        "Seleziona tutti"
     )
 
     if seleziona_tutti:
+
         punti = fogli
+
     else:
+
         punti = st.sidebar.multiselect(
-            "Scegli fogli/punti",
+            "Seleziona fogli",
             fogli
         )
 
     if not punti:
-        st.warning("Seleziona almeno un punto.")
+
+        st.warning(
+            "Seleziona almeno un punto."
+        )
+
         return
 
-    # ======================================================
-    # FILTRO DATI
-    # ======================================================
-    st.sidebar.header("3️⃣ Trattamento Dati")
+    # =====================================================
+    # METODO ANALISI
+    # =====================================================
+    st.sidebar.header("3️⃣ Analisi")
 
     metodo = st.sidebar.radio(
-        "Metodo:",
+        "Metodo elaborazione",
         [
             "Dati Completi",
             "Filtro Sigma (Gauss)"
@@ -195,42 +232,53 @@ def main():
             step=0.5
         )
 
-    # ======================================================
-    # LOOP PRINCIPALE
-    # ======================================================
+    # =====================================================
+    # LOOP PUNTI
+    # =====================================================
     for punto in punti:
 
         st.markdown("---")
-        st.subheader(f"📍 Punto: {punto}")
+
+        st.subheader(
+            f"📍 Punto: {punto}"
+        )
 
         try:
 
             df = dfs[punto].copy()
 
-            # ======================================================
-            # DEBUG
-            # ======================================================
-            with st.expander("🔍 Anteprima dati"):
+            # =================================================
+            # DEBUG DATI
+            # =================================================
+            with st.expander(
+                "🔍 Anteprima dati"
+            ):
 
                 st.write(df.head())
                 st.write(df.dtypes)
 
-            # ======================================================
+            # =================================================
             # VALIDAZIONE
-            # ======================================================
+            # =================================================
             if df.empty:
 
-                st.warning(f"{punto}: foglio vuoto.")
+                st.warning(
+                    f"{punto}: foglio vuoto."
+                )
+
                 continue
 
             if len(df.columns) < 2:
 
-                st.warning(f"{punto}: numero colonne insufficiente.")
+                st.warning(
+                    f"{punto}: colonne insufficienti."
+                )
+
                 continue
 
-            # ======================================================
-            # COLONNA DATA
-            # ======================================================
+            # =================================================
+            # DATA
+            # =================================================
             col_data = df.columns[0]
 
             df[col_data] = pd.to_datetime(
@@ -239,18 +287,25 @@ def main():
                 dayfirst=True
             )
 
-            df = df.dropna(subset=[col_data])
+            df = df.dropna(
+                subset=[col_data]
+            )
 
             if df.empty:
 
-                st.warning(f"{punto}: nessuna data valida.")
+                st.warning(
+                    f"{punto}: nessuna data valida."
+                )
+
                 continue
 
-            df = df.sort_values(col_data)
+            df = df.sort_values(
+                col_data
+            )
 
-            # ======================================================
-            # IDENTIFICAZIONE COLONNE NUMERICHE
-            # ======================================================
+            # =================================================
+            # COLONNE NUMERICHE
+            # =================================================
             colonne_numeriche = []
 
             for c in df.columns[1:]:
@@ -258,19 +313,25 @@ def main():
                 if "Unnamed" in str(c):
                     continue
 
-                serie_test = converti_numerico(df[c])
+                serie_test = converti_numerico(
+                    df[c]
+                )
 
                 if serie_test.notnull().sum() > 0:
+
                     colonne_numeriche.append(c)
 
             if not colonne_numeriche:
 
-                st.warning("Nessuna colonna numerica trovata.")
+                st.warning(
+                    "Nessuna colonna numerica trovata."
+                )
+
                 continue
 
-            # ======================================================
+            # =================================================
             # SELEZIONE SENSORI
-            # ======================================================
+            # =================================================
             selezionate = st.multiselect(
                 f"Sensori disponibili - {punto}",
                 colonne_numeriche,
@@ -280,19 +341,26 @@ def main():
 
             if len(selezionate) == 0:
 
-                st.warning("Nessun sensore selezionato.")
+                st.warning(
+                    "Nessun sensore selezionato."
+                )
+
                 continue
 
-            # ======================================================
+            # =================================================
             # METRICHE
-            # ======================================================
+            # =================================================
             st.markdown("### 📊 Metriche")
 
-            cols_metriche = st.columns(len(selezionate))
+            cols_metriche = st.columns(
+                len(selezionate)
+            )
 
             for i, col in enumerate(selezionate):
 
-                serie = converti_numerico(df[col]).dropna()
+                serie = converti_numerico(
+                    df[col]
+                ).dropna()
 
                 if serie.empty:
                     continue
@@ -305,34 +373,38 @@ def main():
                 cols_metriche[i].metric(
                     label=col,
                     value=f"{ultimo:.3f}",
-                    delta=f"Range: {delta:.3f}"
+                    delta=f"Range {delta:.3f}"
                 )
 
                 cols_metriche[i].caption(
-                    f"Min: {minimo:.3f} | Max: {massimo:.3f}"
+                    f"MIN {minimo:.3f} | MAX {massimo:.3f}"
                 )
 
-            # ======================================================
+            # =================================================
             # GRAFICO
-            # ======================================================
+            # =================================================
             fig = go.Figure()
 
             for col in selezionate:
 
                 try:
 
-                    d = df[[col_data, col]].copy()
+                    d = df[
+                        [col_data, col]
+                    ].copy()
 
-                    d[col] = converti_numerico(d[col])
+                    d[col] = converti_numerico(
+                        d[col]
+                    )
 
                     d = d.dropna()
 
                     if d.empty:
                         continue
 
-                    # ======================================================
+                    # =============================================
                     # FILTRO SIGMA
-                    # ======================================================
+                    # =============================================
                     if metodo == "Filtro Sigma (Gauss)":
 
                         d[col] = applica_filtro_sigma(
@@ -345,26 +417,29 @@ def main():
                     if d.empty:
                         continue
 
-                    # ======================================================
-                    # GRAFICO PRINCIPALE
-                    # ======================================================
-                    fig.add_trace(go.Scatter(
-                        x=d[col_data],
-                        y=d[col],
-                        mode="lines+markers",
-                        name=col
-                    ))
+                    # =============================================
+                    # GRAFICO DATI
+                    # =============================================
+                    fig.add_trace(
+                        go.Scatter(
+                            x=d[col_data],
+                            y=d[col],
+                            mode="lines+markers",
+                            name=col
+                        )
+                    )
 
-                    # ======================================================
+                    # =============================================
                     # TRENDLINE
-                    # ======================================================
+                    # =============================================
                     if len(d) >= 5:
 
                         try:
 
                             x = (
                                 d[col_data]
-                                .astype("int64") // 10**9
+                                .astype("int64")
+                                // 10**9
                             )
 
                             y = pd.to_numeric(
@@ -382,22 +457,31 @@ def main():
 
                             if len(x) >= 5:
 
-                                coeff = np.polyfit(x, y, 3)
+                                coeff = np.polyfit(
+                                    x,
+                                    y,
+                                    3
+                                )
 
-                                poly = np.poly1d(coeff)
+                                poly = np.poly1d(
+                                    coeff
+                                )
 
-                                fig.add_trace(go.Scatter(
-                                    x=d[col_data],
-                                    y=poly(x),
-                                    mode="lines",
-                                    name=f"Trend {col}",
-                                    line=dict(
-                                        dash="dot",
-                                        width=2
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=d[col_data],
+                                        y=poly(x),
+                                        mode="lines",
+                                        name=f"Trend {col}",
+                                        line=dict(
+                                            dash="dot",
+                                            width=2
+                                        )
                                     )
-                                ))
+                                )
 
                         except Exception as e:
+
                             logger.warning(
                                 f"Trendline fallita {col}: {e}"
                             )
@@ -405,15 +489,15 @@ def main():
                 except Exception as e:
 
                     logger.error(
-                        f"Errore elaborazione colonna {col}: {e}"
+                        f"Errore colonna {col}: {e}"
                     )
 
-            # ======================================================
+            # =================================================
             # LAYOUT GRAFICO
-            # ======================================================
+            # =================================================
             fig.update_layout(
                 template="plotly_white",
-                height=600,
+                height=650,
                 hovermode="x unified",
                 legend=dict(
                     orientation="h",
@@ -439,14 +523,15 @@ def main():
 
         except Exception as e:
 
-            st.error(f"Errore nel punto {punto}: {e}")
+            st.error(
+                f"Errore nel punto {punto}: {e}"
+            )
 
             logger.exception(e)
 
-
-# ======================================================
+# =========================================================
 # AVVIO APP
-# ======================================================
+# =========================================================
 if __name__ == "__main__":
 
     try:
@@ -455,6 +540,8 @@ if __name__ == "__main__":
 
     except Exception as e:
 
-        st.error(f"Errore generale applicazione: {e}")
+        st.error(
+            f"Errore generale applicazione: {e}"
+        )
 
         logger.exception(e)
