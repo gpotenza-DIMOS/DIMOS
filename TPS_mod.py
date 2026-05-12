@@ -18,14 +18,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("DIMOS")
 
 def converti_numerico(serie):
-    """Converte una serie in numerico gestendo virgole e spazi."""
     return pd.to_numeric(
         serie.astype(str).str.replace(",", ".", regex=False).str.replace(" ", "", regex=False),
         errors="coerce"
     )
 
 def applica_filtro_sigma(serie, n_sigma=2.0):
-    """Applica il filtro di Gauss (Sigma) per rimuovere gli outlier."""
     try:
         serie = converti_numerico(serie)
         media = serie.mean()
@@ -39,17 +37,12 @@ def applica_filtro_sigma(serie, n_sigma=2.0):
         return serie
 
 def calcola_trend_polinomiale(x_dates, y_values, grado):
-    """Calcola la curva di tendenza basata su regressione polinomiale."""
     try:
-        # Convertiamo le date in formato numerico (timestamp) per la regressione
         x_numeric = np.array([d.timestamp() for d in x_dates])
         y_numeric = np.array(y_values)
-        
-        # Filtriamo eventuali NaN rimasti per il calcolo dei coefficienti
         mask = ~np.isnan(y_numeric)
-        if mask.sum() <= grado: # Serve un numero di punti > del grado
+        if mask.sum() <= grado:
             return None
-            
         coeffs = np.polyfit(x_numeric[mask], y_numeric[mask], grado)
         poly_func = np.poly1d(coeffs)
         return poly_func(x_numeric)
@@ -82,7 +75,6 @@ def estrai_colonne_numeriche(df):
     return colonne
 
 def ottieni_default_params(lista_colonne):
-    """Ritorna DeltaE e DeltaN se presenti, altrimenti le prime disponibili."""
     defaults = [c for c in lista_colonne if c.upper() in ["DELTAE", "DELTAN", "DELTA E", "DELTA N"]]
     if not defaults and len(lista_colonne) > 0:
         return [lista_colonne[0]]
@@ -94,10 +86,9 @@ def ottieni_default_params(lista_colonne):
 def genera_report_word_separato(metodo, n_sigma, dati_report):
     doc = Document()
     doc.add_heading('DIMOS - REPORT ANALISI TOPOGRAFICA DETTAGLIATO', level=1)
-    
-    doc.add_paragraph(f"Metodo elaborazione: {metodo}")
-    if metodo == "Filtro Sigma (Gauss)":
-        doc.add_paragraph(f"Valore Sigma: {n_sigma}")
+    doc.add_paragraph(f"Metodo elaborazione dati: {metodo}")
+    if "Sigma" in metodo:
+        doc.add_paragraph(f"Filtro Outlier: Sigma {n_sigma}")
 
     for sezione in dati_report:
         doc.add_page_break() if dati_report.index(sezione) > 0 else None
@@ -130,11 +121,9 @@ def genera_report_word_separato(metodo, n_sigma, dati_report):
 # APP PRINCIPALE
 # =========================================================
 def run_tps_monitoring():
-    st.set_page_config(page_title="DIMOS - Analisi Topografica", layout="wide")
     st.title("🛰️ DIMOS - Analisi Topografica Avanzata")
     
-    with st.container(border=True):
-        uploaded_file = st.file_uploader("📂 Carica file Excel (.xlsx)", type=["xlsx"])
+    uploaded_file = st.file_uploader("📂 Carica file Excel (.xlsx)", type=["xlsx"])
     
     if uploaded_file is not None:
         dfs = carica_excel(uploaded_file)
@@ -145,125 +134,102 @@ def run_tps_monitoring():
             tutte_colonne.extend(estrai_colonne_numeriche(dfs[f]))
         colonne_uniche = sorted(list(set(tutte_colonne)))
 
-        # --- 2. CONFIGURAZIONE VISUALIZZAZIONE ---
-        st.subheader("📺 Configurazione Visualizzazione e Trend")
+        # --- SEZIONE 1: CONFIGURAZIONE VIDEO ---
+        st.subheader("📺 Configurazione Visualizzazione (Grafico Video)")
         c1, c2, c3 = st.columns([1.5, 1, 1])
-        
         with c1:
-            punti_video = st.multiselect("Seleziona Sensori", fogli, key="punti_video")
-            parametri_video = st.multiselect("Parametri", colonne_uniche, 
-                                           default=ottieni_default_params(colonne_uniche), key="params_video")
-
+            punti_v = st.multiselect("Seleziona Sensori (Video)", fogli, key="pv")
+            params_v = st.multiselect("Parametri (Video)", colonne_uniche, default=ottieni_default_params(colonne_uniche), key="prv")
         with c2:
-            metodo = st.radio("Metodo elaborazione", ["Dati Completi", "Filtro Sigma (Gauss)"], horizontal=False)
-            n_sigma = 2.0
-            if metodo == "Filtro Sigma (Gauss)":
-                n_sigma = st.slider("Valore Sigma", 1.0, 5.0, 2.0, 0.5)
-
+            metodo_v = st.radio("Metodo Video", ["Dati Completi", "Filtro Sigma (Gauss)"], key="mv")
+            ns_v = st.slider("Sigma Video", 1.0, 5.0, 2.0, 0.5) if "Sigma" in metodo_v else 2.0
         with c3:
-            st.markdown("**Trend Polinomiale**")
-            attiva_trend = st.checkbox("Inserisci Curva di Tendenza", value=False)
-            grado_trend = st.slider("Grado del Polinomio", 1, 5, 2) if attiva_trend else 1
+            trend_v = st.checkbox("Inserisci Trend (Video)", value=False, key="tv")
+            grado_v = st.slider("Grado Trend (Video)", 1, 5, 2) if trend_v else 1
 
-        # --- 3. RENDERING VIDEO ---
-        if punti_video and parametri_video:
-            st.divider()
-            fig_video = go.Figure()
-
-            for punto in punti_video:
-                df = dfs[punto].copy()
-                col_data = df.columns[0]
-                df[col_data] = pd.to_datetime(df[col_data], errors="coerce", dayfirst=True)
-                df = df.dropna(subset=[col_data]).sort_values(col_data)
-
-                for parametro in parametri_video:
-                    if parametro not in df.columns: continue
-                    d = df[[col_data, parametro]].copy()
-                    d[parametro] = converti_numerico(d[parametro])
+        if punti_v and params_v:
+            fig_v = go.Figure()
+            for p in punti_v:
+                df = dfs[p].copy()
+                col_dt = df.columns[0]
+                df[col_dt] = pd.to_datetime(df[col_dt], errors="coerce", dayfirst=True)
+                df = df.dropna(subset=[col_dt]).sort_values(col_dt)
+                for pr in params_v:
+                    if pr not in df.columns: continue
+                    d = df[[col_dt, pr]].copy()
+                    d[pr] = converti_numerico(d[pr])
                     d = d.dropna()
-                    if metodo == "Filtro Sigma (Gauss)":
-                        d[parametro] = applica_filtro_sigma(d[parametro], n_sigma)
+                    if "Sigma" in metodo_v:
+                        d[pr] = applica_filtro_sigma(d[pr], ns_v)
                         d = d.dropna()
-
                     if not d.empty:
-                        # Dati reali
-                        fig_video.add_trace(go.Scatter(x=d[col_data], y=d[parametro], 
-                                                     mode="lines+markers", name=f"{punto}: {parametro}"))
-                        # Calcolo e aggiunta Trend
-                        if attiva_trend:
-                            trend_vals = calcola_trend_polinomiale(d[col_data], d[parametro], grado_trend)
-                            if trend_vals is not None:
-                                fig_video.add_trace(go.Scatter(
-                                    x=d[col_data], y=trend_vals, 
-                                    mode="lines", 
-                                    line=dict(dash='dash', width=2), 
-                                    name=f"Trend {grado_trend}° ({punto})"))
+                        fig_v.add_trace(go.Scatter(x=d[col_dt], y=d[pr], mode="lines+markers", name=f"{p}: {pr}"))
+                        if trend_v:
+                            tr = calcola_trend_polinomiale(d[col_dt], d[pr], grado_v)
+                            if tr is not None:
+                                fig_v.add_trace(go.Scatter(x=d[col_dt], y=tr, mode="lines", line=dict(dash='dash'), name=f"Trend {grado_v}° ({p})"))
+            st.plotly_chart(fig_v, use_container_width=True)
 
-            st.plotly_chart(fig_video, use_container_width=True)
+        # --- SEZIONE 2: ESPORTAZIONE WORD (SPECULARE) ---
+        st.divider()
+        st.subheader("📄 Configurazione Esportazione Report Word")
+        w1, w2, w3 = st.columns([1.5, 1, 1])
+        with w1:
+            punti_w_raw = st.multiselect("Sensori per Report (Un grafico ognuno)", ["TUTTI"] + fogli, default=punti_v, key="pw")
+            params_w = st.multiselect("Parametri Report", colonne_uniche, default=params_v, key="prw")
+        with w2:
+            metodo_w = st.radio("Metodo Report Word", ["Dati Completi", "Filtro Sigma (Gauss)"], key="mw")
+            ns_w = st.slider("Sigma Word", 1.0, 5.0, 2.0, 0.5) if "Sigma" in metodo_w else 2.0
+        with w3:
+            trend_w = st.checkbox("Inserisci Trend (Word)", value=False, key="tw")
+            grado_w = st.slider("Grado Trend (Word)", 1, 5, 2) if trend_w else 1
 
-            # --- 4. CONFIGURAZIONE WORD ---
-            st.divider()
-            st.subheader("📄 Configurazione Esportazione Report Word")
-            w_col1, w_col2 = st.columns(2)
-            with w_col1:
-                punti_word_raw = st.multiselect("Layer per Word", ["TUTTI"] + fogli, default=punti_video, key="punti_word")
-            with w_col2:
-                parametri_word = st.multiselect("Parametri per layer", colonne_uniche, default=parametri_video, key="params_word")
-
-            if st.button("🚀 Genera Report Word Dettagliato"):
-                punti_effettivi = fogli if "TUTTI" in punti_word_raw else punti_word_raw
-                if not punti_effettivi or not parametri_word:
-                    st.warning("Seleziona sensori e parametri per il report.")
-                else:
-                    with st.spinner("Elaborazione grafici separati..."):
-                        dati_per_report = []
-                        for punto in punti_effettivi:
-                            dfw = dfs[punto].copy()
-                            col_dt = dfw.columns[0]
-                            dfw[col_dt] = pd.to_datetime(dfw[col_dt], errors="coerce", dayfirst=True)
-                            dfw = dfw.dropna(subset=[col_dt]).sort_values(col_dt)
-
-                            fig_punto = go.Figure()
-                            metriche_punto = []
-                            
-                            for param in parametri_word:
-                                if param not in dfw.columns: continue
-                                dw = dfw[[col_dt, param]].copy()
-                                dw[param] = converti_numerico(dw[param])
+        if st.button("🚀 Genera Report Word Dettagliato"):
+            punti_effettivi = fogli if "TUTTI" in punti_w_raw else punti_w_raw
+            if not punti_effettivi or not params_w:
+                st.warning("Seleziona sensori e parametri per il report.")
+            else:
+                with st.spinner("Creazione grafici individuali per il report..."):
+                    dati_per_report = []
+                    for punto in punti_effettivi:
+                        dfw = dfs[punto].copy()
+                        c_dt = dfw.columns[0]
+                        dfw[c_dt] = pd.to_datetime(dfw[c_dt], errors="coerce", dayfirst=True)
+                        dfw = dfw.dropna(subset=[c_dt]).sort_values(c_dt)
+                        
+                        fig_p = go.Figure()
+                        metriche_p = []
+                        
+                        for prm in params_w:
+                            if prm not in dfw.columns: continue
+                            dw = dfw[[c_dt, prm]].copy()
+                            dw[prm] = converti_numerico(dw[prm])
+                            dw = dw.dropna()
+                            if "Sigma" in metodo_w:
+                                dw[prm] = applica_filtro_sigma(dw[prm], ns_w)
                                 dw = dw.dropna()
-                                if metodo == "Filtro Sigma (Gauss)":
-                                    dw[param] = applica_filtro_sigma(dw[param], n_sigma)
-                                    dw = dw.dropna()
-                                
-                                if not dw.empty:
-                                    metriche_punto.append({
-                                        "parametro": param, "min": dw[param].min(), "max": dw[param].max(), 
-                                        "range": dw[param].max() - dw[param].min(), "ultimo": dw[param].iloc[-1]
-                                    })
-                                    fig_punto.add_trace(go.Scatter(x=dw[col_dt], y=dw[param], mode="lines+markers", name=param))
-                                    
-                                    # Trend nel report
-                                    if attiva_trend:
-                                        t_vals = calcola_trend_polinomiale(dw[col_dt], dw[param], grado_trend)
-                                        if t_vals is not None:
-                                            fig_punto.add_trace(go.Scatter(x=dw[col_dt], y=t_vals, mode="lines", 
-                                                                         line=dict(dash='dash', width=2), 
-                                                                         name=f"Trend {grado_trend}°"))
+                            
+                            if not dw.empty:
+                                metriche_p.append({
+                                    "parametro": prm, "min": dw[prm].min(), "max": dw[prm].max(), 
+                                    "range": dw[prm].max() - dw[prm].min(), "ultimo": dw[prm].iloc[-1]
+                                })
+                                fig_p.add_trace(go.Scatter(x=dw[c_dt], y=dw[prm], mode="lines+markers", name=prm))
+                                if trend_w:
+                                    trw = calcola_trend_polinomiale(dw[c_dt], dw[prm], grado_w)
+                                    if trw is not None:
+                                        fig_p.add_trace(go.Scatter(x=dw[c_dt], y=trw, mode="lines", line=dict(dash='dash'), name=f"Trend {grado_w}°"))
 
-                            if metriche_punto:
-                                fig_punto.update_layout(title=f"Analisi {punto}", template="plotly_white")
-                                img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-                                fig_punto.write_image(img_tmp.name, width=1000, height=500)
-                                dati_per_report.append({"punto": punto, "metriche": metriche_punto, "img_path": img_tmp.name})
+                        if metriche_p:
+                            fig_p.update_layout(title=f"Sensore: {punto}", template="plotly_white")
+                            img_t = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                            fig_p.write_image(img_t.name, width=1000, height=500)
+                            dati_per_report.append({"punto": punto, "metriche": metriche_p, "img_path": img_t.name})
 
-                        if dati_per_report:
-                            report_path = genera_report_word_separato(metodo, n_sigma, dati_per_report)
-                            with open(report_path, "rb") as f:
-                                st.download_button("⬇️ Scarica Report", f, "Report_DIMOS_Dettagliato.docx")
-        else:
-            st.info("Configura la visualizzazione per iniziare.")
-    else:
-        st.info("Carica un file Excel per procedere.")
+                    if dati_per_report:
+                        path_w = genera_report_word_separato(metodo_w, ns_w, dati_per_report)
+                        with open(path_w, "rb") as f:
+                            st.download_button("⬇️ Scarica Report", f, "Report_DIMOS_Dettagliato.docx")
 
 if __name__ == "__main__":
     run_tps_monitoring()
